@@ -128,7 +128,8 @@ function entete(actif) {
     S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueCompte()) }, 'Mon compte et mes rappels') : null,
     S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueChangerMdp({ volontaire: true })) }, 'Mon mot de passe') : null,
     S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueAide()) }, 'Aide et support') : null,
-    h('button', { type: 'button', class: 'menu-item', onClick: deconnexion }, 'Se déconnecter'));
+    h('button', { type: 'button', class: 'menu-item', onClick: deconnexion }, 'Se déconnecter'),
+    h('p', { class: 'muted', style: 'font-size:13px;padding:6px 16px 4px' }, 'Atelio ' + APP_VERSION));
   const bouton = h('button', {
     type: 'button', id: 'btn-compte', class: 'avatar', 'aria-haspopup': 'true', 'aria-expanded': 'false',
     'aria-label': 'Mon compte : ' + nomAffiche(),
@@ -563,7 +564,8 @@ function vueConnexion(message) {
     erreur,
     bouton,
     h('button', { type: 'button', class: 'linkbtn', onClick: vueMotDePasseOublie }, 'Mot de passe oublié ?'),
-    h('p', { class: 'muted' }, 'Il n’y a pas d’inscription libre : votre accès est créé par l’éditeur d’Atelio ou par la direction de votre ESAT.')
+    h('p', { class: 'muted' }, 'Il n’y a pas d’inscription libre : votre accès est créé par l’éditeur d’Atelio ou par la direction de votre ESAT.'),
+    h('p', { class: 'muted', style: 'font-size:13px' }, 'Atelio ' + APP_VERSION)
   );
   render(h('main', { class: 'center' }, form));
 }
@@ -2227,8 +2229,12 @@ function vueGestion() {
   filtre.value = g.filtre;
   const liste = g.travailleurs
     .filter((w) => (g.inactifs || w.actif) && (g.filtre === 'tous' || w.atelier_id === g.filtre))
+    .filter((w) => !GH().rech || norm(w.nom + ' ' + w.prenom).includes(norm(GH().rech)))
     .sort(parNomPrenom);
-  const lignes = liste.map((w) => {
+  const LIMITE_TRAV = 6;
+  const toutVoir = GH().tout;
+  const visibles = toutVoir ? liste : liste.slice(0, LIMITE_TRAV);
+  const lignes = visibles.map((w) => {
     const sel = h('select', { class: 'in', style: 'min-width:170px', 'aria-label': 'Atelier de ' + w.prenom + ' ' + w.nom, onChange: (e) => changerAtelier(w, e.target.value) },
       g.ateliers.map((a) => h('option', { value: a.id }, a.nom)));
     sel.value = w.atelier_id;
@@ -2242,7 +2248,7 @@ function vueGestion() {
             h('div', { class: 'row', style: 'justify-content:flex-start' },
               h('button', { type: 'button', class: 'primary', style: 'min-height:44px', onClick: () => enregistrerHoraires(w) }, 'Enregistrer'),
               h('button', { type: 'button', class: 'secondary', style: 'min-height:44px', onClick: () => { gh.ed = null; vueGestion(); } }, 'Annuler')))
-        : h('div', { class: 'stack', style: 'gap:6px' },
+        : h('div', { class: 'stack', style: 'gap:6px;align-items:flex-start' },
             h('span', {}, resumeHoraires(horairesDe(w))),
             h('button', { type: 'button', class: 'linkbtn', 'aria-label': 'Modifier les horaires de ' + w.prenom + ' ' + w.nom,
               onClick: () => { gh.ed = w.id; gh.val = horairesDe(w); vueGestion(); } }, 'Modifier les horaires'))),
@@ -2265,11 +2271,19 @@ function vueGestion() {
       h('div', {}, h('label', { class: 'lbl', for: 'filtreAtelier' }, 'Atelier'), filtre),
       h('label', { style: 'display:flex;align-items:center;gap:10px;min-height:48px;font-weight:700' },
         h('input', { type: 'checkbox', checked: g.inactifs, style: 'width:22px;height:22px', onChange: (e) => { g.inactifs = e.target.checked; vueGestion(); } }),
-        'Afficher les travailleurs désactivés')),
+        'Afficher les travailleurs désactivés'),
+      h('div', {}, h('label', { class: 'lbl', for: 'rechTrav' }, 'Rechercher'),
+        h('input', { id: 'rechTrav', class: 'in', type: 'search', autocomplete: 'off', placeholder: 'Nom ou prénom', value: GH().rech || '', style: 'min-width:240px',
+          onInput: (e) => { GH().rech = e.target.value; GH().tout = false; vueGestion(); const i = document.getElementById('rechTrav'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } } }))),
     h('div', { class: 'scroll' }, h('table', { class: 'tbl' },
       h('caption', { class: 'sr' }, 'Liste des travailleurs'),
       h('thead', {}, h('tr', {}, h('th', {}, 'Nom'), h('th', {}, 'Prénom'), h('th', {}, 'Atelier'), h('th', {}, 'Horaires'), h('th', {}, 'État'), h('th', {}, 'Action'))),
       h('tbody', {}, lignes.length ? lignes : h('tr', {}, h('td', { colspan: '6' }, 'Aucun travailleur à afficher.'))))),
+    liste.length > LIMITE_TRAV
+      ? h('div', { class: 'row', style: 'justify-content:flex-start' },
+          h('p', { class: 'muted', role: 'status' }, toutVoir ? liste.length + ' travailleurs affichés.' : LIMITE_TRAV + ' travailleurs affichés sur ' + liste.length + '.'),
+          h('button', { type: 'button', class: 'secondary', onClick: () => { GH().tout = !toutVoir; vueGestion(); } }, toutVoir ? 'Réduire la liste' : 'Voir tout (' + liste.length + ')'))
+      : null,
     h('div', { class: 'stack', style: 'border-top:1px solid #d3d3d8;padding-top:18px' },
       h('h3', {}, 'Ajouter un travailleur'),
       h('div', { class: 'fields' },
@@ -3064,7 +3078,7 @@ function tableauSuivi(c) {
 // ---------------------------------------------------------------------
 // V21 : IDENTITÉ DE L'ESAT, PLANNING, JOURNAL, AIDE
 // ---------------------------------------------------------------------
-const APP_VERSION = 'V23';
+const APP_VERSION = 'V1.0';   // première version en ligne (ancien suivi interne : V1 à V23)
 
 // ---------------------------------------------------------------------
 // V23 : HORAIRES DES TRAVAILLEURS (journée entière, matin, après-midi, jours non travaillés)
