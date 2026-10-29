@@ -79,6 +79,10 @@ function champ(id, libelle, input) {
   return h('div', {}, h('label', { class: 'lbl', for: id }, libelle), input);
 }
 
+// Un statut « compte comme une présence » si c'est « Présent » (statut de base) ou si l'ESAT l'a coché.
+function estPresence(s) { return !!s && ((s.code === 'P' && !s.esat_id) || s.compte_presence === true); }
+function idsPresence(statuts) { return new Set((statuts || []).filter(estPresence).map((x) => x.id)); }
+
 function pageAvec(contenu, large) {
   const actif = S.navActif;
   S.navActif = undefined;   // l'onglet actif n'est valable que pour cette page
@@ -235,7 +239,7 @@ async function chargerAccueil() {
         sb.from('mois_clotures').select('mois').eq('mois', precDebut).maybeSingle(),
         sb.from('presences').select('id').gte('jour', precDebut).lte('jour', precFin).limit(1),
         sb.from('presences').select('jour, statut_id').gte('jour', sem[0].iso).lte('jour', sem[4].iso).limit(5000),
-        sb.from('statuts').select('id, code, esat_id'),
+        sb.from('statuts').select('*'),
         sb.from('jours_fermes').select('jour, motif').gte('jour', sem[0].iso).lte('jour', sem[4].iso)
       ]);
       if (!clo.error && !anc.error && !clo.data && (anc.data || []).length > 0) {
@@ -251,11 +255,11 @@ async function chargerAccueil() {
         });
       }
       if (!ps.error && !st.error) {
-        const idP = ((st.data || []).find((x) => x.code === 'P' && !x.esat_id) || {}).id;
+        const idsP = idsPresence(st.data);
         const fermes = mapFermes(!fe.error ? (fe.data || []) : [], [sem[0].annee, sem[4].annee]);
         info.semaine = sem.map((j) => {
           const lignes = (ps.data || []).filter((x) => x.jour === j.iso);
-          const presents = lignes.filter((x) => x.statut_id === idP).length;
+          const presents = lignes.filter((x) => idsP.has(x.statut_id)).length;
           return { ...j, saisis: lignes.length, presents, taux: lignes.length ? Math.round((presents / lignes.length) * 100) : null, ferie: fermes[j.iso] || '' };
         });
       }
@@ -699,7 +703,7 @@ async function chargerMoniteur(jourChoisi) {
   const [a, e, st, tr, pr, va, cl, ap, fe] = await Promise.all([
     sb.from('ateliers').select('nom').eq('id', p.atelier_id).maybeSingle(),
     sb.from('esats').select('nom').eq('id', p.esat_id).maybeSingle(),
-    sb.from('statuts').select('id, code, nom, couleur, ordre, esat_id').order('ordre').order('code'),
+    sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('travailleurs').select('*').eq('atelier_id', p.atelier_id).eq('actif', true).order('nom').order('prenom'),
     sb.from('presences').select('travailleur_id, statut_id').eq('jour', jour),
     sb.from('journees_validees').select('atelier_id').eq('atelier_id', p.atelier_id).eq('jour', jour).maybeSingle(),
@@ -964,7 +968,7 @@ async function chargerAdmin(selectionId) {
   S.msg = { ...(await lireMessages()), brouillon: (S.msg && S.msg.brouillon) || '', duree: S.msg && S.msg.duree, ok: S.msg && S.msg.ok, err: S.msg && S.msg.err };
   const [es, st, pf] = await Promise.all([
     sb.from('esats').select('id, nom, cree_le').order('cree_le'),
-    sb.from('statuts').select('id, esat_id, code, nom, couleur, ordre').order('ordre').order('code'),
+    sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('profils').select('id, email, role, esat_id')
   ]);
   const ko = [es, st, pf].find((r) => r.error);
@@ -1011,9 +1015,11 @@ async function enregistrerStatut(ctx, nomInput, codeInput) {
   if (existe) return echec('Ce code existe déjà pour cet ESAT : choisissez-en un autre.');
   const existeNom = st.statuts.some((s) => (s.esat_id === null || s.esat_id === esatId) && s.id !== edition && norm(s.nom) === norm(nom));
   if (existeNom) return echec('Un statut porte déjà ce nom.');
+  const pres = !!st.stPres;
   const { error } = edition
-    ? await sb.from('statuts').update({ code, nom, couleur: st.couleur }).eq('id', edition).eq('esat_id', esatId)
-    : await sb.from('statuts').insert({ esat_id: esatId, code, nom, couleur: st.couleur, ordre: 100 });
+    ? await sb.from('statuts').update({ code, nom, couleur: st.couleur, compte_presence: pres }).eq('id', edition).eq('esat_id', esatId)
+    : await sb.from('statuts').insert({ esat_id: esatId, code, nom, couleur: st.couleur, ordre: 100, compte_presence: pres });
+  if (error && /compte_presence/.test(error.message || '')) return echec('La base de données n’est pas encore à jour : lancez d’abord le fichier atelio-v25.sql dans Supabase (SQL Editor).');
   if (error) return echec((edition ? 'Modification' : 'Ajout') + ' impossible : ' + error.message);
   await ctx.reload();
   const neuf = ctx.get();
@@ -1049,8 +1055,8 @@ function blocStatuts(ctx) {
   const faible = contrasteBlanc(st.couleur) < 4.5;
   const dansPalette = COULEURS.some((c) => c.hex.toLowerCase() === st.couleur.toLowerCase());
   const choisir = (hex) => { st.couleur = hex; st.errStatut = ''; st.msgStatut = ''; ctx.redraw(); };
-  const modifier = (s) => { st.edition = s.id; st.stNom = s.nom; st.stCode = s.code; st.couleur = s.couleur; st.errStatut = ''; st.msgStatut = ''; ctx.redraw(); };
-  const annuler = () => { st.edition = null; st.stNom = ''; st.stCode = ''; st.errStatut = ''; st.msgStatut = ''; ctx.redraw(); };
+  const modifier = (s) => { st.edition = s.id; st.stNom = s.nom; st.stCode = s.code; st.stPres = s.compte_presence === true; st.couleur = s.couleur; st.errStatut = ''; st.msgStatut = ''; ctx.redraw(); };
+  const annuler = () => { st.edition = null; st.stNom = ''; st.stCode = ''; st.stPres = false; st.errStatut = ''; st.msgStatut = ''; ctx.redraw(); };
 
   return h('div', { class: 'card stack' },
     h('h2', {}, 'Statuts de présence de cet ESAT'),
@@ -1063,7 +1069,7 @@ function blocStatuts(ctx) {
       h('p', { class: 'muted' }, 'Le moniteur voit « Présent » et « Absent ». Quand il choisit « Absent », il peut préciser le motif parmi tous les autres statuts : ceux de base et ceux que vous ajoutez ici.'),
       perso.length === 0 ? h('p', { class: 'muted' }, 'Aucun statut spécifique pour l’instant.') : null,
       h('ul', { class: 'list', style: 'gap:10px' }, perso.map((s) => h('li', { class: 'row' },
-        pastille(s),
+        h('span', { class: 'row', style: 'gap:10px;justify-content:flex-start' }, pastille(s), s.compte_presence === true ? h('span', { class: 'tag' }, 'compte comme présence') : null),
         h('span', { class: 'row', style: 'gap:8px' },
           h('button', { type: 'button', class: 'linkbtn', 'aria-label': 'Modifier le statut ' + s.nom, onClick: () => modifier(s) }, 'Modifier'),
           h('button', { type: 'button', class: 'rm', 'aria-label': 'Supprimer le statut ' + s.nom, onClick: () => supprimerStatut(ctx, s) }, 'Supprimer')))))),
@@ -1072,6 +1078,9 @@ function blocStatuts(ctx) {
       h('div', { class: 'fields' },
         h('div', { style: 'flex:2 1 220px' }, h('label', { class: 'lbl', for: 'stNom' }, 'Nom du statut (ex. Formation)'), nom),
         h('div', { style: 'flex:1 1 120px' }, h('label', { class: 'lbl', for: 'stCode' }, 'Code (4 signes max.)'), code)),
+      h('label', { class: 'row', style: 'justify-content:flex-start;gap:12px;align-items:flex-start' },
+        h('input', { type: 'checkbox', id: 'stPres', class: 'coche', checked: !!st.stPres, onChange: (e) => { st.stPres = e.target.checked; } }),
+        h('span', {}, h('strong', {}, 'Compte comme une présence'), h('br'), h('span', { class: 'muted' }, 'Cochez si cette journée doit compter dans les taux de présence et dans le total « Présent » (ex. Formation, Stage). Sinon elle compte comme une absence.'))),
       h('div', { class: 'stack', style: 'gap:10px' },
         h('span', { class: 'lbl', id: 'couleurLbl', style: 'margin:0' }, 'Couleur'),
         h('div', { class: 'chips', role: 'group', 'aria-labelledby': 'couleurLbl', style: 'gap:12px' },
@@ -1212,7 +1221,7 @@ async function chargerAdminEsat(choix) {
   const [e, at, st, tr, va, cl, fe] = await Promise.all([
     sb.from('esats').select('nom').eq('id', p.esat_id).maybeSingle(),
     sb.from('ateliers').select('id, nom').eq('esat_id', p.esat_id).order('nom'),
-    sb.from('statuts').select('id, code, nom, couleur, ordre, esat_id').order('ordre').order('code'),
+    sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('travailleurs').select('*').order('prenom'),
     sb.from('journees_validees').select('atelier_id, jour').gte('jour', debut).lte('jour', fin),
     sb.from('mois_clotures').select('mois').eq('mois', debut).maybeSingle(),
@@ -1422,7 +1431,7 @@ async function construireClasseur(o) {
     o.lignes.forEach((l) => { Object.keys(l.cpt).forEach((k) => { totCpt[k] = (totCpt[k] || 0) + l.cpt[k]; }); totManque += l.manque; });
     o.info.forEach((x, i) => {
       const saisis = o.lignes.filter((l) => l.cells[i].s).length;
-      const presents = o.lignes.filter((l) => l.cells[i].s && l.cells[i].s.id === o.idPresent).length;
+      const presents = o.lignes.filter((l) => l.cells[i].s && o.idPresent.has(l.cells[i].s.id)).length;
       const cell = ws.getCell(r, PREM_JOUR + i);
       cell.value = saisis === 0 ? '' : presents + ' sur ' + o.lignes.length;
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
@@ -1526,7 +1535,7 @@ function vueAdminEsat() {
   const d = S.d;
   const n = nbJours(d.annee, d.mois);
   const now = new Date();
-  const idP = (d.statuts.find((s) => s.code === 'P' && !s.esat_id) || {}).id;
+  const idsP = idsPresence(d.statuts);
   const parId = Object.fromEntries(d.statuts.map((s) => [s.id, s]));
   if (d.atelierId !== 'tous' && !d.ateliers.some((a) => a.id === d.atelierId)) d.atelierId = 'tous';
 
@@ -1563,8 +1572,8 @@ function vueAdminEsat() {
   // Colonnes de totaux : Présent, total des absences, puis un motif par colonne.
   // Les motifs sont les statuts de l'ESAT (de base + ceux ajoutés pour lui par l'éditeur).
   const sA = d.statuts.find((s) => s.code === 'A' && !s.esat_id);
-  const absences = d.statuts.filter((s) => s.id !== idP);
-  const colsTot = [{ label: 'Présent', ids: [idP] }, { label: 'Total absences', ids: absences.map((s) => s.id) }]
+  const absences = d.statuts.filter((s) => !idsP.has(s.id));
+  const colsTot = [{ label: 'Présent', ids: Array.from(idsP) }, { label: 'Total absences', ids: absences.map((s) => s.id) }]
     .concat(absences.map((s) => ({ label: (s === sA ? 'Non précisé' : s.nom), ids: [s.id] })));
   const somme = (c, cpt) => c.ids.reduce((tot, id) => tot + (cpt[id] || 0), 0);
   d.calc = { info, details, colsTot, somme };
@@ -1605,7 +1614,7 @@ function vueAdminEsat() {
       h('thead', {}, h('tr', {}, h('th', { class: 's s1' }, 'Nom'), h('th', { class: 's s2 sl' }, 'Prénom'), entetesJours, entetesTotaux)),
       h('tbody', {}, corps.length ? corps : h('tr', {}, h('td', { class: 's s1', colspan: '2' }, 'Aucun travailleur dans cet atelier.')))));
     exportation = () => exporterExcel({
-      d, esat: d.esat, annee: d.annee, mois: d.mois, info, colsTot, somme, statuts: d.statuts, jusqua, idPresent: idP,
+      d, esat: d.esat, annee: d.annee, mois: d.mois, info, colsTot, somme, statuts: d.statuts, jusqua, idPresent: idsP,
       vue: 'Atelier : ' + atelier.nom, libelleTotal: 'Total atelier',
       nomFichier: nomFichier(atelier.nom.normalize('NFD').replace(/[^\w]+/g, '-').toLowerCase()),
       lignes: lignes.map((l) => ({ atelier: atelier.nom, nom: l.w.nom, prenom: l.w.prenom, cells: l.cells, cpt: l.cpt, manque: l.manque })),
@@ -1617,7 +1626,7 @@ function vueAdminEsat() {
       const membres = details.filter((l) => l.w.atelier_id === a.id);
       const jours = info.map((x) => {
         const saisis = membres.filter((l) => d.pres[l.w.id + '|' + x.iso]).length;
-        const presents = membres.filter((l) => idP && d.pres[l.w.id + '|' + x.iso] === idP).length;
+        const presents = membres.filter((l) => idsP.has(d.pres[l.w.id + '|' + x.iso])).length;
         const attendus = membres.filter((l) => x.we || d.pres[l.w.id + '|' + x.iso] || creneau(l.w, x.iso)).length;
         return { x, saisis, presents, total: attendus, valide: !!d.valid[a.id + '|' + x.iso] };
       });
@@ -1687,7 +1696,7 @@ function vueAdminEsat() {
       h('tbody', {}, lignesTable)));
 
     exportation = () => exporterExcel({
-      d, esat: d.esat, annee: d.annee, mois: d.mois, info, colsTot, somme, statuts: d.statuts, jusqua, idPresent: idP,
+      d, esat: d.esat, annee: d.annee, mois: d.mois, info, colsTot, somme, statuts: d.statuts, jusqua, idPresent: idsP,
       vue: 'Tous les ateliers', libelleTotal: 'Total ESAT',
       nomFichier: nomFichier('tous-les-ateliers'),
       lignes: parAtelier.flatMap((l) => l.membres.map((m) => ({ atelier: l.a.nom, nom: m.w.nom, prenom: m.w.prenom, cells: m.cells, cpt: m.cpt, manque: m.manque }))),
@@ -1938,7 +1947,7 @@ async function chargerStatutsEsat(garder) {
   const eid = S.profil.esat_id;
   const [e, st] = await Promise.all([
     sb.from('esats').select('nom').eq('id', eid).maybeSingle(),
-    sb.from('statuts').select('id, esat_id, code, nom, couleur, ordre').order('ordre').order('code')
+    sb.from('statuts').select('*').order('ordre').order('code')
   ]);
   const ko = [e, st].find((r) => r.error);
   if (ko) return vueMessage('Chargement impossible', ko.error.message);
@@ -2054,6 +2063,7 @@ function lignesDepuisFeuille(aoa) {
     const r = aoa[i] || [];
     const val = (c) => String(r[c] == null ? '' : r[c]).trim().slice(0, 100);
     const l = { atelier: val(cA), nom: val(cN), prenom: val(cP) };
+    if (/^exemple/i.test(l.atelier)) continue;   // ligne d'exemple du modèle
     if (l.atelier || l.nom || l.prenom) lignes.push(l);
   }
   return { lignes };
@@ -2088,7 +2098,8 @@ async function lireFichier(fichier) {
     } else {
       wb = XLSX.read(buf, { type: 'array' });
     }
-    const feuille = wb.Sheets[wb.SheetNames[0]];
+    const nomFeuille = wb.SheetNames.find((n) => /travailleur/i.test(n)) || wb.SheetNames[0];   // la fiche de mise en route a plusieurs onglets
+    const feuille = wb.Sheets[nomFeuille];
     const aoa = XLSX.utils.sheet_to_json(feuille, { header: 1, defval: '', raw: false });
     const r = lignesDepuisFeuille(aoa);
     if (r.error) return refuser(r.error);
@@ -2824,7 +2835,7 @@ async function chargerReporting(choix) {
   const [e, at, st, tr, va, cl, fe] = await Promise.all([
     sb.from('esats').select('nom').eq('id', p.esat_id).maybeSingle(),
     sb.from('ateliers').select('id, nom').eq('esat_id', p.esat_id).order('nom'),
-    sb.from('statuts').select('id, code, nom, couleur, ordre, esat_id').order('ordre').order('code'),
+    sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('travailleurs').select('id, prenom, nom, atelier_id, actif').order('prenom'),
     toutLire(() => sb.from('journees_validees').select('atelier_id, jour').gte('jour', debut).lte('jour', fin).order('jour').order('atelier_id')),
     sb.from('mois_clotures').select('mois, cloture_le'),
@@ -2848,8 +2859,8 @@ function calculerReporting(r) {
   const parId = Object.fromEntries(r.statuts.map((s) => [s.id, s]));
   const statutP = r.statuts.find((s) => s.code === 'P' && !s.esat_id) || r.statuts[0];
   const statutA = r.statuts.find((s) => s.code === 'A' && !s.esat_id);
-  const idP = statutP ? statutP.id : null;
-  const statutsAbs = r.statuts.filter((s) => s.id !== idP);
+  const idsP = idsPresence(r.statuts);
+  const statutsAbs = r.statuts.filter((s) => !idsP.has(s.id));
   const atelierDe = Object.fromEntries(r.travailleurs.map((w) => [w.id, w.atelier_id]));
   const persDe = Object.fromEntries(r.travailleurs.map((w) => [w.id, w]));
 
@@ -2867,7 +2878,7 @@ function calculerReporting(r) {
     const k = String(p.jour).slice(0, 7);
     const mm = parCle[k];
     if (!s || !mm) return;
-    const estP = p.statut_id === idP;
+    const estP = idsP.has(p.statut_id);
     mm.saisies++; if (estP) mm.presents++;
     mm.cpt[s.id] = (mm.cpt[s.id] || 0) + 1;
     mm.jours.add(p.jour);
@@ -3361,7 +3372,7 @@ async function chargerMaquette() {
   const [at, tr, st] = await Promise.all([
     sb.from('ateliers').select('id, nom').eq('esat_id', p.esat_id).order('nom'),
     sb.from('travailleurs').select('id, prenom, nom, atelier_id, actif').eq('esat_id', p.esat_id).order('nom'),
-    sb.from('statuts').select('id, code, nom, couleur, ordre, esat_id').order('ordre').order('code')
+    sb.from('statuts').select('*').order('ordre').order('code')
   ]);
   const ko = [at, tr, st].find((x) => x.error);
   if (ko) return vueMessage('Chargement impossible', ko.error.message);
@@ -3495,7 +3506,7 @@ async function chargerPlanning(garderMessages) {
   const [at, tr, st, ab, fe] = await Promise.all([
     sb.from('ateliers').select('id, nom').eq('esat_id', p.esat_id).order('nom'),
     sb.from('travailleurs').select('id, prenom, nom, atelier_id, actif').eq('esat_id', p.esat_id).order('nom'),
-    sb.from('statuts').select('id, code, nom, couleur, ordre, esat_id').order('ordre').order('code'),
+    sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('absences_prevues').select('id, travailleur_id, statut_id, debut, fin, note').gte('fin', aujourdhuiISO()).order('debut'),
     sb.from('jours_fermes').select('id, jour, motif').gte('jour', debutFermes).order('jour')
   ]);
