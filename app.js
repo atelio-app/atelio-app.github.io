@@ -124,7 +124,7 @@ function entete() {
       S.user && S.prefs && S.prefs.prenom ? h('span', { class: 'muted' }, S.user.email) : null,
       p ? h('span', { class: 'tag', style: 'align-self:flex-start;margin-top:4px' }, ROLES[p.role]) : null),
     S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueCompte()) }, 'Mon compte et mes rappels') : null,
-    (S.user && p && p.role !== 'moniteur') ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueChangerMdp({ volontaire: true })) }, 'Mon mot de passe') : null,
+    S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueChangerMdp({ volontaire: true })) }, 'Mon mot de passe') : null,
     S.user ? h('button', { type: 'button', class: 'menu-item', onClick: aller(() => vueAide()) }, 'Aide et support') : null,
     h('button', { type: 'button', class: 'menu-item', onClick: deconnexion }, 'Se déconnecter'));
   const bouton = h('button', {
@@ -1989,7 +1989,7 @@ async function basculerCompte(c) {
 
 async function copierIdentifiants() {
   const i = S.g.identifiants;
-  const temporaire = i.role !== 'moniteur';
+  const temporaire = true;
   const texte = 'Bonjour,\n\nVotre accès à Atelio est prêt.\nAdresse du site : ' + window.location.origin +
     '\nIdentifiant : ' + i.email + '\nMot de passe' + (temporaire ? ' temporaire' : '') + ' : ' + i.mdp +
     (temporaire ? '\n\nÀ votre première connexion, vous choisirez votre propre mot de passe.' : '\n\nGardez-le précieusement : en cas d’oubli, demandez-en un nouveau à la direction de votre ESAT.');
@@ -2171,10 +2171,8 @@ function vueGestion() {
     ? h('div', { class: 'banner', role: 'status', style: 'flex-direction:column;align-items:flex-start' },
         h('p', {}, g.identifiants.titre),
         h('p', { style: 'font-size:17px' }, 'Adresse e-mail : ', h('strong', {}, g.identifiants.email)),
-        h('p', { style: 'font-size:17px' }, (g.identifiants.role === 'moniteur' ? 'Mot de passe : ' : 'Mot de passe temporaire : '), h('strong', { style: 'font-family:monospace;font-size:21px;letter-spacing:1px' }, g.identifiants.mdp)),
-        h('p', { class: 'muted', style: 'font-weight:400' }, g.identifiants.role === 'moniteur'
-          ? 'Ce mot de passe ne sera plus affiché. Le moniteur ne peut pas le modifier : en cas d’oubli, vous lui en donnez un nouveau.'
-          : 'Ce mot de passe ne sera plus affiché. La personne devra en choisir un nouveau à sa première connexion.'),
+        h('p', { style: 'font-size:17px' }, 'Mot de passe temporaire : ', h('strong', { style: 'font-family:monospace;font-size:21px;letter-spacing:1px' }, g.identifiants.mdp)),
+        h('p', { class: 'muted', style: 'font-weight:400' }, 'Ce mot de passe ne sera plus affiché. La personne devra en choisir un nouveau à sa première connexion.'),
         h('button', { type: 'button', class: 'secondary', onClick: copierIdentifiants }, 'Copier le message à envoyer'))
     : null;
   const blocComptes = h('section', { class: 'card stack', 'aria-labelledby': 'g-comptes' },
@@ -2196,7 +2194,7 @@ function vueGestion() {
       h('div', {}, h('label', { class: 'lbl', for: 'cpMdp' }, 'Mot de passe (facultatif, ' + MDP_MIN + ' caractères minimum)'), cpMdp),
       h('div', {}, h('button', { type: 'button', class: 'primary', disabled: g.occupe, onClick: () => creerCompte(cpEmail, cpRole, cpAt, cpMdp, cpPrenom) },
         g.occupe ? 'Un instant…' : 'Créer l’accès')),
-      h('p', { class: 'muted' }, 'Aucun e-mail n’est envoyé : vous choisissez le mot de passe (ou laissez le champ vide pour qu’Atelio en génère un), puis vous le transmettez à la personne. Un moniteur ne peut pas modifier son mot de passe ; un administrateur d’ESAT choisira le sien à sa première connexion.')));
+      h('p', { class: 'muted' }, 'Aucun e-mail n’est envoyé : vous choisissez le mot de passe (ou laissez le champ vide pour qu’Atelio en génère un), puis vous le transmettez à la personne. Chaque personne choisira son propre mot de passe à sa première connexion.')));
 
   // ----- Import
   let apercu = null;
@@ -3561,8 +3559,8 @@ async function vueAide() {
       'Plus personne ne peut alors modifier les présences de ce mois. Vous pouvez le rouvrir au même endroit si besoin.'),
     q('Jours fériés, journées banalisées, absences prévues', 'Les jours fériés français sont déjà pris en compte automatiquement. Dans « Planning », ajoutez les journées banalisées ou fermetures propres à votre ESAT (pont, journée pédagogique, fin d’année) : ces jours sont grisés et ne comptent plus dans « Non saisi ». Si votre ESAT travaille un jour férié, indiquez-le au même endroit. Vous pouvez aussi prévoir les congés ou rendez-vous à l’avance : le moniteur n’a plus qu’à les confirmer.'),
     q('À quoi sert le Journal ?', 'Il garde la trace de chaque saisie, modification, validation et clôture : qui, quand, avant/après. Il s’écrit automatiquement et personne ne peut l’effacer : utile en cas de question ou de contrôle.'),
-    q('Créer un compte moniteur ou réinitialiser un mot de passe', etapes(['Ouvrez « Gérer l’ESAT », section « Comptes ».', 'Saisissez l’e-mail, choisissez le rôle (et l’atelier pour un moniteur).', 'Notez le mot de passe affiché et transmettez-le à la personne.']),
-      'Un moniteur ne peut pas changer son mot de passe lui-même : c’est vous qui le gérez.'),
+    q('Créer un compte moniteur ou réinitialiser un mot de passe', etapes(['Ouvrez « Gérer l’ESAT », section « Comptes ».', 'Saisissez l’e-mail, choisissez le rôle (et l’atelier pour un moniteur).', 'Notez le mot de passe temporaire affiché et transmettez-le à la personne.']),
+      'Le mot de passe que vous donnez est temporaire : à sa première connexion, la personne en choisit un nouveau que vous ne connaîtrez pas. En cas d’oubli, recréez un mot de passe temporaire dans « Gérer l’ESAT ».'),
     q('Statuts et motifs d’absence', 'Dans « Statuts et motifs », ajoutez les statuts propres à votre ESAT (ex. Formation, Rendez-vous médical) avec une couleur et un code court.'),
     q('Horaires des travailleurs (demi-journées, jours non travaillés)', 'Dans « Gérer l’ESAT », à l’ajout d’un travailleur ou avec « Modifier les horaires », choisissez pour chaque jour du lundi au vendredi : journée, matin, après-midi ou « Ne travaille pas ». Les jours non travaillés sont grisés dans le tableau de bord, les fiches et les exports, et ne comptent pas dans « Non saisi ». Les matins et après-midis sont repérés par M et A (ou « matin » / « après-midi »).'),
     q('Logo et couleur de l’ESAT', 'Dans « Paramètres », ajoutez le logo et choisissez une couleur : ils apparaissent dans l’en-tête, les fiches et les exports Excel.')
