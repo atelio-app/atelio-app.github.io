@@ -136,9 +136,9 @@ function entete(actif) {
     onClick: () => { const ouvert = menu.hidden; menu.hidden = !ouvert; bouton.setAttribute('aria-expanded', String(ouvert)); }
   }, initiale());
   return h('header', { class: 'top' },
-    h('div', { class: 'marques' },
-      h('img', { class: 'logo', src: 'logo.png', alt: 'Atelio' }),
-      S.marque && logoSur(S.marque.logo) ? h('img', { class: 'logo-esat', src: logoSur(S.marque.logo), alt: 'Logo ' + (S.marque.nom || 'de l’ESAT') }) : null),
+    h(p ? 'button' : 'div', { class: 'marques' + (p ? ' lien-accueil' : ''), type: p ? 'button' : null, title: p ? 'Retour à l’accueil' : null, 'aria-label': p ? 'Retour à l’accueil' : null, onClick: p ? () => { fermerMenu(false); chargerAccueil(); } : null },
+      h('img', { class: 'logo', src: 'logo.png', alt: p ? '' : 'Atelio' }),
+      S.marque && logoSur(S.marque.logo) ? h('img', { class: 'logo-esat', src: logoSur(S.marque.logo), alt: p ? '' : 'Logo ' + (S.marque.nom || 'de l’ESAT') }) : null),
     h('div', { class: 'top-droite' },
       actif !== undefined && p ? onglets(actif) : null,
       h('div', { class: 'avatar-wrap' }, bouton, menu)));
