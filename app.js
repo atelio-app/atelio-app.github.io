@@ -2453,11 +2453,12 @@ function graphique(dessiner, description) {
   const bulle = h('div', { class: 'bulle', hidden: true, 'aria-hidden': 'true' });
   let largeur = 0;
   const outils = {
-    montrer(x, y, titre, lignes) {
+    montrer(x, y, titre, lignes, phrase) {
       bulle.replaceChildren(h('div', { class: 'bulle-t' }, titre),
-        lignes.map((l) => h('div', { class: 'bulle-l' },
+        ...(lignes || []).map((l) => h('div', { class: 'bulle-l' },
           l.couleur ? h('i', { style: 'background:' + l.couleur }) : null,
-          h('strong', {}, l.valeur), h('span', {}, ' ' + l.libelle))));
+          h('strong', {}, l.valeur), h('span', {}, ' ' + l.libelle))),
+        phrase ? h('div', { class: 'bulle-p' }, phrase) : null);
       bulle.hidden = false;
       const bw = bulle.offsetWidth || 160;
       const W = boite.clientWidth || largeur;
@@ -2552,7 +2553,9 @@ function grapheTendance(r) {
       const m = p.x;
       o.montrer(x, p.v == null ? H / 2 : yy(p.v), libelleMois(m.a, m.m), p.v == null
         ? [{ valeur: '—', libelle: 'aucune saisie' }]
-        : [{ couleur: vert, valeur: pct(p.v, 1), libelle: 'de présence' }, { valeur: nf(m.presents), libelle: 'présents sur ' + nf(m.saisies) + ' saisies' }]);
+        : [{ couleur: vert, valeur: pct(p.v, 1), libelle: 'de présence' }, { valeur: nf(m.presents), libelle: 'présents sur ' + nf(m.saisies) + ' saisies' }],
+      p.v == null ? 'Aucune présence n’a été saisie ce mois-là.'
+        : 'En ' + minuscule(libelleMois(m.a, m.m)) + ', ' + nf(m.presents) + ' journées de présence sur ' + nf(m.saisies) + ' journées renseignées : le taux de présence est de ' + pct(p.v, 1) + '.');
     };
     const zone = sv('rect', { x: M.g, y: 0, width: w - M.g - M.d, height: H - M.b, fill: 'transparent' });
     zone.addEventListener('pointermove', (ev) => {
@@ -2598,7 +2601,8 @@ function grapheAbsencesMois(r) {
           ? sv('path', { d: rectBout(cx - lc / 2, bas - hh, lc, hh, 'haut'), fill: fond })
           : sv('rect', { x: cx - lc / 2, y: bas - hh, width: lc, height: hh, fill: fond });
         sensible(el, (px, py) => o.montrer(px, py, libelleMois(x.a, x.m), segs.map((z) => ({ couleur: couleurSure(z.s.couleur), valeur: nf(z.n), libelle: z.s.nom + (z.s === q.s ? ' ◂' : '') }))
-          .concat([{ valeur: nf(totaux[i]), libelle: 'jours d’absence au total' }])), o);
+          .concat([{ valeur: nf(totaux[i]), libelle: 'jours d’absence au total' }]),
+          'En ' + minuscule(libelleMois(x.a, x.m)) + ', « ' + q.s.nom + ' » représente ' + nf(q.n) + ' jour' + (q.n > 1 ? 's' : '') + ' d’absence sur ' + nf(totaux[i]) + ' au total.'), o);
         el.setAttribute('aria-label', libelleMois(x.a, x.m) + ' : ' + q.s.nom + ', ' + q.n);
         svg.append(el);
         if (hh >= 16 && q.s.code.length <= 2) svg.append(sv('text', { x: cx, y: bas - hh / 2 + 4, 'text-anchor': 'middle', class: 'seg', fill: texteSurFond(fond), 'pointer-events': 'none' }, q.s.code));
@@ -2631,7 +2635,8 @@ function grapheJours(r) {
       const el = sv('path', { d: rectBout(cx - lc / 2, y(0) - hh, lc, hh, 'haut'), fill: q === emphase ? orange : vert });
       sensible(el, (px, py) => o.montrer(px, py, jourCourt(q.iso), [
         { couleur: vert, valeur: pct(q.taux, 0), libelle: 'de présence' },
-        { valeur: nf(q.presents) + ' / ' + nf(q.saisies), libelle: 'présents / renseignés' }]), o);
+        { valeur: nf(q.presents) + ' / ' + nf(q.saisies), libelle: 'présents / renseignés' }],
+        'Le ' + jourCourt(q.iso) + ', ' + nf(q.presents) + ' personne' + (q.presents > 1 ? 's étaient présentes' : ' était présente') + ' sur ' + nf(q.saisies) + ' renseignée' + (q.saisies > 1 ? 's' : '') + ' : ' + pct(q.taux, 0) + ' de présence.'), o);
       el.setAttribute('aria-label', jourCourt(q.iso) + ' : ' + pct(q.taux, 0));
       svg.append(el);
     });
@@ -2666,7 +2671,8 @@ function grapheAteliers(r) {
         const el = k === segs.length - 1
           ? sv('path', { d: rectBout(x, y0, lw, bh, 'droite'), fill: fond })
           : sv('rect', { x, y: y0, width: lw, height: bh, fill: fond });
-        sensible(el, (px, py) => o.montrer(px, py, a.nom, [{ couleur: fond, valeur: nf(q.n) + ' (' + pct(part, 0) + ')', libelle: q.s.nom }, { valeur: nf(a.saisies), libelle: 'saisies au total' }]), o);
+        sensible(el, (px, py) => o.montrer(px, py, a.nom, [{ couleur: fond, valeur: nf(q.n) + ' (' + pct(part, 0) + ')', libelle: q.s.nom }, { valeur: nf(a.saisies), libelle: 'saisies au total' }],
+          'Dans l’atelier ' + a.nom + ', « ' + q.s.nom + ' » représente ' + nf(q.n) + ' journée' + (q.n > 1 ? 's' : '') + ' sur ' + nf(a.saisies) + ' renseignées, soit ' + pct(part, 0) + '.'), o);
         el.setAttribute('aria-label', a.nom + ' : ' + q.s.nom + ' ' + pct(part, 0));
         svg.append(el);
         if (lw >= 40) svg.append(sv('text', { x: x + lw / 2, y: y0 + bh / 2 + 4, 'text-anchor': 'middle', class: 'seg', fill: texteSurFond(fond), 'pointer-events': 'none' }, pct(part, 0)));
@@ -2699,7 +2705,8 @@ function grapheSemaine(r) {
       const el = sv('path', { d: rectBout(cx - lc / 2, y(0) - hh, lc, hh, 'haut'), fill: fond });
       sensible(el, (px, py) => o.montrer(px, py, q.long, [
         { couleur: fond, valeur: pct(q.taux, 1), libelle: 'd’absence' },
-        { valeur: nf(q.abs) + ' / ' + nf(q.saisies), libelle: 'absences / saisies' }]), o);
+        { valeur: nf(q.abs) + ' / ' + nf(q.saisies), libelle: 'absences / saisies' }],
+        'Sur six mois, les ' + minuscule(q.long) + 's comptent ' + nf(q.abs) + ' absence' + (q.abs > 1 ? 's' : '') + ' sur ' + nf(q.saisies) + ' journées renseignées : ' + pct(q.taux, 1) + ' d’absence.'), o);
       el.setAttribute('aria-label', q.long + ' : ' + pct(q.taux, 1) + ' d’absence');
       svg.append(el);
       svg.append(sv('text', { x: cx, y: y(q.taux * 100) - 8, 'text-anchor': 'middle', class: 'val' }, pct(q.taux, 0)));
@@ -3053,7 +3060,8 @@ function repartitionGlobale(c, statuts) {
       const part = q.n / total; const lw = Math.max(1, part * w - (k < segs.length - 1 ? 2 : 0));
       const fond = couleurSure(q.s.couleur);
       const el = k === segs.length - 1 ? sv('path', { d: rectBout(x, 6, lw, 22, 'droite'), fill: fond }) : sv('rect', { x, y: 6, width: lw, height: 22, fill: fond });
-      sensible(el, (px, py) => o.montrer(px, py, q.s.nom, [{ couleur: fond, valeur: nf(q.n), libelle: 'jours (' + pct(part, 1) + ')' }]), o);
+      sensible(el, (px, py) => o.montrer(px, py, q.s.nom, [{ couleur: fond, valeur: nf(q.n), libelle: 'jours (' + pct(part, 1) + ')' }],
+        '« ' + q.s.nom + ' » : ' + nf(q.n) + ' jour' + (q.n > 1 ? 's' : '') + ' ce mois-ci, soit ' + pct(part, 1) + ' des journées renseignées.'), o);
       el.setAttribute('aria-label', q.s.nom + ' : ' + nf(q.n) + ' (' + pct(part, 1) + ')');
       svg.append(el);
       if (lw >= 34) svg.append(sv('text', { x: x + lw / 2, y: 21, 'text-anchor': 'middle', class: 'seg', fill: texteSurFond(fond), 'pointer-events': 'none' }, q.s.code));
