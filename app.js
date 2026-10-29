@@ -87,7 +87,7 @@ function pageAvec(contenu, large) {
 
 async function deconnexion() {
   await sb.auth.signOut();
-  S.user = null; S.profil = null; S.m = null; S.a = null; S.t = null; S.c = null; S.accueil = null; S.prefs = { prenom: '', rappels: [] }; S.mdpFait = false; S.supEd = undefined; S.supMsg = null;
+  S.user = null; S.profil = null; S.m = null; S.a = null; S.t = null; S.c = null; S.accueil = null; S.prefs = { prenom: '', rappels: [] }; S.mdpFait = false; S.supEd = undefined; S.supMsg = null; S.msg = null;
   vueConnexion();
 }
 
@@ -201,6 +201,7 @@ async function chargerAccueil() {
   const jour = aujourdhuiISO();
   const info = { role };
   try {
+    if (role === 'moniteur' || role === 'admin_esat') info.messages = (await lireMessages()).liste;
     if (role === 'moniteur') {
       const sem = semaineCourante();
       const [tr, pr, va, vs, fe] = await Promise.all([
@@ -398,6 +399,77 @@ function blocSemaineMoniteur(info) {
     h('div', { class: 'tuiles', role: 'group', 'aria-label': 'Journées de la semaine' }, tuiles));
 }
 
+// --- Messages affichés sur l'accueil (éditeur -> tous ; administrateur -> son ESAT)
+const MSG_MAX = 300;
+const MSG_DUREES = [[1, '1 jour'], [7, '1 semaine'], [30, '1 mois'], [0, 'Sans date de fin']];
+
+async function lireMessages() {
+  const { data, error } = await sb.from('messages_accueil').select('id, texte, esat_id, expire_le, cree_le').order('cree_le', { ascending: false });
+  if (error) return { liste: [], indispo: /messages_accueil|does not exist|schema cache/i.test(error.message), erreur: error.message };
+  return { liste: data || [] };
+}
+
+function dateCourteFr(iso) { return iso ? new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : ''; }
+
+function blocMessages(recharger) {
+  const m = S.msg || { liste: [] };
+  const editeur = S.profil.role === 'super_admin';
+  const miens = (m.liste || []).filter((x) => (editeur ? !x.esat_id : !!x.esat_id));
+  const ta = h('textarea', { id: 'msgTexte', class: 'in', rows: '3', maxlength: String(MSG_MAX), style: 'max-width:560px;width:100%', placeholder: editeur ? 'ex. Une mise à jour d’Atelio sera installée ce soir.' : 'ex. Réunion d’équipe jeudi à 14 h : pensez à valider vos journées avant.' });
+  ta.value = m.brouillon || '';
+  const compteur = h('small', { class: 'muted' }, ta.value.length + ' / ' + MSG_MAX);
+  ta.addEventListener('input', () => { m.brouillon = ta.value; compteur.textContent = ta.value.length + ' / ' + MSG_MAX; });
+  const duree = h('select', { id: 'msgDuree', class: 'in', style: 'max-width:220px' }, MSG_DUREES.map(([j, l]) => h('option', { value: String(j) }, l)));
+  duree.value = String(m.duree != null ? m.duree : 7);
+  duree.addEventListener('change', () => { m.duree = Number(duree.value); });
+
+  const publier = async () => {
+    const t = ta.value.trim();
+    S.msg = m; m.ok = ''; m.err = '';
+    if (!t) { m.err = 'Écrivez votre message.'; return recharger(); }
+    const { error } = await sb.rpc('poster_message', { p_texte: t, p_jours: Number(duree.value) });
+    if (error) { m.err = /poster_message|does not exist|schema cache/i.test(error.message) ? 'Option non activée : exécutez d’abord atelio-v24.sql dans Supabase.' : 'Publication impossible : ' + error.message; return recharger(); }
+    m.brouillon = ''; m.ok = 'Message publié sur l’accueil des moniteurs.';
+    recharger();
+  };
+  const retirer = async (id) => {
+    S.msg = m; m.ok = ''; m.err = '';
+    const { error } = await sb.rpc('retirer_message', { p_id: id });
+    if (error) m.err = 'Retrait impossible : ' + error.message; else m.ok = 'Message retiré.';
+    recharger();
+  };
+
+  return h('section', { class: 'card stack', 'aria-labelledby': 't-messages' },
+    h('h2', { id: 't-messages' }, 'Message sur l’accueil des moniteurs'),
+    h('p', { class: 'muted' }, editeur
+      ? 'Le message apparaît en haut de l’accueil de tous les moniteurs (et administrateurs) de tous les ESAT : annonce, maintenance, nouveauté…'
+      : 'Le message apparaît en haut de l’accueil de tous les moniteurs de votre ESAT : consigne, réunion, rappel…'),
+    m.indispo ? h('p', { class: 'err', role: 'alert' }, 'Option non activée : exécutez d’abord atelio-v24.sql dans Supabase.') : null,
+    h('div', {}, h('label', { class: 'lbl', for: 'msgTexte' }, 'Votre message'), ta, compteur),
+    h('div', { class: 'row', style: 'justify-content:flex-start;align-items:flex-end;gap:12px;flex-wrap:wrap' },
+      h('div', {}, h('label', { class: 'lbl', for: 'msgDuree' }, 'Afficher pendant'), duree),
+      h('button', { type: 'button', class: 'primary', disabled: !!m.indispo, onClick: publier }, 'Publier le message')),
+    m.err ? h('p', { class: 'err', role: 'alert' }, m.err) : null,
+    m.ok ? h('p', { class: 'ok', role: 'status' }, m.ok) : null,
+    h('h3', {}, 'Messages affichés en ce moment'),
+    miens.length === 0
+      ? h('p', { class: 'muted' }, 'Aucun message affiché.')
+      : h('ul', { class: 'list', style: 'gap:10px' }, miens.map((x) => h('li', { class: 'msg-li' },
+          h('div', { style: 'min-width:0' }, h('p', { style: 'overflow-wrap:anywhere' }, x.texte),
+            h('small', { class: 'muted' }, x.expire_le ? 'Affiché jusqu’au ' + dateCourteFr(x.expire_le) : 'Sans date de fin')),
+          h('button', { type: 'button', class: 'secondary', onClick: () => retirer(x.id), 'aria-label': 'Retirer ce message' }, 'Retirer')))));
+}
+
+// Bandeau en haut de l'accueil
+function bandeauMessages(info) {
+  const liste = (info.messages || []).filter((x) => info.role === 'moniteur' || !x.esat_id);
+  if (!liste.length) return null;
+  return h('div', { class: 'stack annonces', role: 'region', 'aria-label': 'Messages' }, liste.map((x) =>
+    h('div', { class: 'annonce' + (x.esat_id ? '' : ' ed') },
+      h('small', {}, x.esat_id ? 'Message de votre direction' : 'Message d’Atelio'),
+      h('p', {}, x.texte))));
+}
+
 function vueAccueil() {
   const info = S.accueil || { role: S.profil.role };
   const prenom = S.prefs && S.prefs.prenom;
@@ -426,6 +498,7 @@ function vueAccueil() {
     h('div', { class: 'stack', style: 'gap:6px' },
       h('p', { class: 'muted' }, dateLongue()),
       h('h1', {}, prenom ? ['Bonjour ', h('em', {}, prenom)] : 'Bonjour')),
+    bandeauMessages(info),
     h('div', { class: 'accueil' + (droite.length ? '' : ' seul') },
       h('div', { class: 'stack', style: 'gap:24px;min-width:0' },
         blocAFaire(info),
@@ -888,6 +961,7 @@ function vueMoniteur() {
 // ---------------------------------------------------------------------
 async function chargerAdmin(selectionId) {
   if (S.supEd === undefined) S.supEd = await lireSupport();
+  S.msg = { ...(await lireMessages()), brouillon: (S.msg && S.msg.brouillon) || '', duree: S.msg && S.msg.duree, ok: S.msg && S.msg.ok, err: S.msg && S.msg.err };
   const [es, st, pf] = await Promise.all([
     sb.from('esats').select('id, nom, cree_le').order('cree_le'),
     sb.from('statuts').select('id, esat_id, code, nom, couleur, ordre').order('ordre').order('code'),
@@ -1086,6 +1160,7 @@ function vueAdmin() {
           h('input', { id: 'supEd', type: 'email', autocomplete: 'off', placeholder: 'ex. support@atelio.fr', value: S.supEd || '' })),
         h('button', { type: 'button', class: 'primary', onClick: enregistrerSupportEditeur }, 'Enregistrer')),
       S.supMsg ? h('p', { class: S.supMsg.ko ? 'err' : 'ok', role: S.supMsg.ko ? 'alert' : 'status' }, S.supMsg.t) : null),
+    blocMessages(() => chargerAdmin()),
     h('div', { class: 'cols' }, colGauche, colDroite)
   ], true));
 }
@@ -1892,6 +1967,7 @@ async function chargerGestion(garder, esatId) {
   const tr = await toutLire(() => sb.from('travailleurs').select('*').eq('esat_id', eid).order('nom').order('id'));
   const ko = [e, at, pf, tr].find((r) => r.error);
   if (ko) return vueMessage('Chargement impossible', ko.error.message);
+  if (S.profil.role === 'admin_esat') S.msg = { ...(await lireMessages()), brouillon: (S.msg && S.msg.brouillon) || '', duree: S.msg && S.msg.duree, ok: S.msg && S.msg.ok, err: S.msg && S.msg.err };
   const ancien = garder ? (S.g || {}) : {};
   S.g = {
     esatId: eid, esat: e.data ? e.data.nom : '', ateliers: at.data, comptes: pf.data, identifiants: null, travailleurs: tr.data,
@@ -2394,6 +2470,7 @@ function vueGestion() {
     h('div', { class: 'stack', style: 'gap:6px' }, h('p', { class: 'muted' }, g.esat), h('h1', {}, 'Gérer l’ESAT')),
     g.err ? h('p', { class: 'err', role: 'alert' }, g.err) : null,
     g.msg ? h('p', { class: 'ok', role: 'status' }, g.msg) : null,
+    S.profil.role === 'admin_esat' ? blocMessages(() => chargerGestion(true)) : null,
     blocAteliers, blocTravailleurs, blocComptes, blocImport
   ], true));
 }
