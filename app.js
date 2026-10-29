@@ -2957,7 +2957,7 @@ async function enregistrerMarque() {
   } else {
     S.marque = { ...(S.marque || {}), logo: p.logo || null, couleur: p.couleur || null };
     p.err = '';
-    p.msg = 'Identité enregistrée. Elle apparaît dans l’en-tête, sur les fiches mensuelles, dans les exports Excel et sur la maquette.';
+    p.msg = 'Identité enregistrée. Elle apparaît dans l’en-tête, sur les fiches mensuelles et dans les exports Excel.';
   }
   vueParametres();
 }
@@ -2989,7 +2989,7 @@ function vueParametres() {
     p.msg ? h('p', { class: 'ok', role: 'status' }, p.msg) : null,
     h('section', { class: 'card stack', 'aria-labelledby': 't-ident' },
       h('h2', { id: 't-ident' }, 'Identité de l’ESAT'),
-      h('p', { class: 'muted' }, 'Le logo et la couleur personnalisent l’en-tête de l’application, les fiches mensuelles, les exports Excel et la maquette de feuille de présence.'),
+      h('p', { class: 'muted' }, 'Le logo et la couleur personnalisent l’en-tête de l’application, les fiches mensuelles, les exports Excel et les fiches mensuelles.'),
       h('div', { class: 'row', style: 'justify-content:flex-start;align-items:center;gap:20px' },
         apercu,
         h('div', { class: 'stack', style: 'gap:10px' },
@@ -3010,11 +3010,7 @@ function vueParametres() {
       h('div', {}, h('label', { class: 'lbl', for: 'supEsat' }, 'Adresse e-mail'),
         h('input', { id: 'supEsat', type: 'email', autocomplete: 'off', placeholder: 'ex. direction@monesat.fr', value: p.support || '',
           onInput: (e) => { p.support = e.target.value; } })),
-      h('div', {}, h('button', { type: 'button', class: 'primary', onClick: enregistrerSupport }, 'Enregistrer l’adresse'))),
-    h('section', { class: 'card stack', 'aria-labelledby': 't-maq' },
-      h('h2', { id: 't-maq' }, 'Maquette de base'),
-      h('p', { class: 'muted' }, 'Créez une feuille de présence mensuelle vierge à l’en-tête de votre ESAT (logo, nom, couleur), à imprimer ou à enregistrer en PDF. Vous pouvez la pré-remplir avec les travailleurs d’un atelier.'),
-      h('div', {}, h('button', { type: 'button', class: 'secondary', onClick: () => chargerMaquette() }, 'Créer une maquette de base')))
+      h('div', {}, h('button', { type: 'button', class: 'primary', onClick: enregistrerSupport }, 'Enregistrer l’adresse')))
   ], true));
 }
 
@@ -3469,7 +3465,7 @@ async function vueAide() {
       'Un moniteur ne peut pas changer son mot de passe lui-même : c’est vous qui le gérez.'),
     q('Statuts et motifs d’absence', 'Dans « Statuts et motifs », ajoutez les statuts propres à votre ESAT (ex. Formation, Rendez-vous médical) avec une couleur et un code court.'),
     q('Horaires des travailleurs (demi-journées, jours non travaillés)', 'Dans « Gérer l’ESAT », à l’ajout d’un travailleur ou avec « Modifier les horaires », choisissez pour chaque jour du lundi au vendredi : journée, matin, après-midi ou « Ne travaille pas ». Les jours non travaillés sont grisés dans le tableau de bord, les fiches et les exports, et ne comptent pas dans « Non saisi ». Les matins et après-midis sont repérés par M et A (ou « matin » / « après-midi »).'),
-    q('Logo, couleur et maquette de l’ESAT', 'Dans « Paramètres », ajoutez le logo et choisissez une couleur : ils apparaissent dans l’en-tête, les fiches, les exports Excel et la maquette de feuille de présence vierge.')
+    q('Logo et couleur de l’ESAT', 'Dans « Paramètres », ajoutez le logo et choisissez une couleur : ils apparaissent dans l’en-tête, les fiches et les exports Excel.')
   ];
   const editeur = [
     q('Créer un ESAT client', etapes(['Dans « Espace éditeur », saisissez le nom de l’ESAT et ajoutez-le.', 'Ouvrez-le avec « Gérer cet ESAT » pour créer ses ateliers et importer ses travailleurs.', 'Créez ensuite le compte de son administrateur.'])),
