@@ -1508,7 +1508,7 @@ function vueAdminEsat() {
         exportation ? h('button', { type: 'button', class: 'secondary', style: 'align-self:flex-end', onClick: exportation }, 'Exporter (Excel)') : null,
         d.ateliers.length ? h('button', {
           type: 'button', class: 'secondary', style: 'align-self:flex-end',
-          onClick: () => { d.fAtelier = d.atelierId; d.fTrav = 'tous'; vueFiches(); }
+          onClick: () => { d.fAtelier = d.atelierId; d.fTrav = 'tous'; const m0 = cleMois(d.annee, d.mois); d.fDe = m0; d.fA = m0; chargerFiches(); }
         }, 'Fiches mensuelles (PDF)') : null)),
     tableau,
     legende
@@ -1520,11 +1520,11 @@ function vueAdminEsat() {
 // ---------------------------------------------------------------------
 const JOURS_COURTS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
 
-function ficheTravailleur(d, l, nomAtelier, jusqua) {
-  const c = d.calc;
+function ficheTravailleur(d, l, nomAtelier, k) {
+  const c = k; const jusqua = k.jusqua;
   const moitie = Math.ceil(c.info.length / 2);
   const ligne = ({ x, s, off }) => {
-    const jour = JOURS_COURTS[new Date(d.annee, d.mois, x.j).getDay()];
+    const jour = JOURS_COURTS[new Date(k.annee, k.mois, x.j).getDay()];
     let contenu;
     if (s) contenu = [h('span', { class: 'pt', style: '--c:' + couleurSure(s.couleur) }), s.nom];
     else if (x.we) contenu = h('span', { class: 'vide' }, x.ferie || 'Week-end');
@@ -1546,7 +1546,7 @@ function ficheTravailleur(d, l, nomAtelier, jusqua) {
       logo ? h('img', { class: 'fiche-logo', src: logo, alt: '' }) : null,
       h('div', { class: 'stack', style: 'gap:4px' },
         h('p', { class: 'muted' }, d.esat),
-        h('h2', {}, 'Fiche de présence · ' + libelleMois(d.annee, d.mois)))),
+        h('h2', {}, 'Fiche de présence · ' + libelleMois(k.annee, k.mois)))),
     h('div', { class: 'fiche-id' },
       h('p', {}, h('strong', {}, 'Nom : '), l.w.nom),
       h('p', {}, h('strong', {}, 'Prénom : '), l.w.prenom),
@@ -1563,43 +1563,143 @@ function ficheTravailleur(d, l, nomAtelier, jusqua) {
     h('p', { class: 'muted', style: 'font-size:13px' }, 'Édité le ' + new Date().toLocaleDateString('fr-FR') + ' avec Atelio. Document confidentiel : il contient des données de présence.'));
 }
 
-function vueFiches() {
-  const d = S.d;
-  const c = d.calc;
+const moisDeCle = (c) => ({ annee: +c.slice(0, 4), mois: +c.slice(5, 7) - 1 });
+const MAX_MOIS_FICHES = 12;
+
+// Calcule, pour un mois, les lignes de chaque travailleur (même logique que le tableau de bord)
+function calculMoisFiche(d, annee, mois, pres, lignesFermes) {
+  const n = nbJours(annee, mois);
+  const fermes = mapFermes(lignesFermes, [annee]);
+  const parId = Object.fromEntries(d.statuts.map((st) => [st.id, st]));
   const now = new Date();
   let jusqua = 0;
-  if (d.annee === now.getFullYear() && d.mois === now.getMonth()) jusqua = now.getDate() - 1;
-  else if (d.annee < now.getFullYear() || (d.annee === now.getFullYear() && d.mois < now.getMonth())) jusqua = c.info.length;
+  if (annee === now.getFullYear() && mois === now.getMonth()) jusqua = now.getDate() - 1;
+  else if (annee < now.getFullYear() || (annee === now.getFullYear() && mois < now.getMonth())) jusqua = n;
+  const info = Array.from({ length: n }, (_, i) => {
+    const j = i + 1;
+    const g = new Date(annee, mois, j).getDay();
+    const iso = isoJour(annee, mois, j);
+    const ferie = fermes[iso] || '';
+    return { j, iso, lettre: JOURS_LETTRES[g], we: g === 0 || g === 6 || !!ferie, ferie };
+  });
+  const gens = d.travailleurs.filter((w) => w.actif || info.some((x) => pres[w.id + '|' + x.iso])).sort(parNomPrenom);
+  const details = gens.map((w) => {
+    const cpt = {};
+    let manque = 0;
+    const cells = info.map((x) => {
+      const sid = pres[w.id + '|' + x.iso];
+      const st = sid ? parId[sid] : null;
+      const cr = creneau(w, x.iso);
+      const off = !st && !x.we && !cr;
+      if (st) cpt[st.id] = (cpt[st.id] || 0) + 1;
+      else if (!x.we && !off && x.j <= jusqua) manque++;
+      return { x, s: st, off, cr };
+    });
+    return { w, cells, cpt, manque };
+  });
+  return { annee, mois, info, details, jusqua, colsTot: d.calc.colsTot, somme: d.calc.somme };
+}
+
+// Charge les mois choisis (de « fDe » à « fA »), puis affiche les fiches
+async function chargerFiches() {
+  const d = S.d;
+  if (d.fDe > d.fA) d.fA = d.fDe;
+  const de = moisDeCle(d.fDe);
+  const liste = [];
+  for (let a = de.annee, m = de.mois; cleMois(a, m) <= d.fA && liste.length < MAX_MOIS_FICHES; m++) {
+    if (m > 11) { m = 0; a++; }
+    liste.push({ annee: a, mois: m });
+  }
+  d.fA = cleMois(liste[liste.length - 1].annee, liste[liste.length - 1].mois);
+  d.fCharge = true;
+  vueFiches();
+  const debut = isoJour(liste[0].annee, liste[0].mois, 1);
+  const dern = liste[liste.length - 1];
+  const fin = isoJour(dern.annee, dern.mois, nbJours(dern.annee, dern.mois));
+  const [pr, fe] = await Promise.all([
+    toutLire(() => sb.from('presences').select('id, travailleur_id, jour, statut_id').gte('jour', debut).lte('jour', fin).order('id')),
+    sb.from('jours_fermes').select('jour, motif').gte('jour', debut).lte('jour', fin)
+  ]);
+  if (pr.error) { d.fCharge = false; d.fErr = 'Chargement impossible : ' + pr.error.message; return vueFiches(); }
+  const pres = {};
+  pr.data.forEach((r) => { pres[r.travailleur_id + '|' + r.jour] = r.statut_id; });
+  const fermes = fe && !fe.error ? fe.data : [];
+  d.fMois = liste.map((x) => calculMoisFiche(d, x.annee, x.mois, pres,
+    fermes.filter((f) => f.jour >= isoJour(x.annee, x.mois, 1) && f.jour <= isoJour(x.annee, x.mois, nbJours(x.annee, x.mois)))));
+  d.fErr = '';
+  d.fCharge = false;
+  vueFiches();
+}
+
+function vueFiches() {
+  const d = S.d;
+  const mois = d.fMois || [];
+  // Liste des travailleurs présents sur la période (un travailleur apparaît une seule fois)
+  const vus = new Map();
+  mois.forEach((k) => k.details.forEach((l) => { if (!vus.has(l.w.id)) vus.set(l.w.id, l.w); }));
+  const tous = [...vus.values()].sort(parNomPrenom);
 
   if (d.fAtelier !== 'tous' && !d.ateliers.some((a) => a.id === d.fAtelier)) d.fAtelier = 'tous';
-  const liste = c.details.filter((l) => d.fAtelier === 'tous' || l.w.atelier_id === d.fAtelier);
-  if (d.fTrav !== 'tous' && !liste.some((l) => l.w.id === d.fTrav)) d.fTrav = 'tous';
-  const choisis = d.fTrav === 'tous' ? liste : liste.filter((l) => l.w.id === d.fTrav);
+  const liste = tous.filter((w) => d.fAtelier === 'tous' || w.atelier_id === d.fAtelier);
+  if (d.fTrav !== 'tous' && !liste.some((w) => w.id === d.fTrav)) d.fTrav = 'tous';
+  const choisis = d.fTrav === 'tous' ? liste : liste.filter((w) => w.id === d.fTrav);
   const nomAtelier = (id) => (d.ateliers.find((a) => a.id === id) || {}).nom || '';
+  const nbFiches = choisis.reduce((t, w) => t + mois.filter((k) => k.details.some((l) => l.w.id === w.id)).length, 0);
 
   const selA = h('select', { id: 'fAtelier', class: 'in', style: 'max-width:300px', onChange: (e) => { d.fAtelier = e.target.value; d.fTrav = 'tous'; vueFiches(); } },
     h('option', { value: 'tous' }, 'Tous les ateliers'), d.ateliers.map((a) => h('option', { value: a.id }, a.nom)));
   selA.value = d.fAtelier;
   const selT = h('select', { id: 'fTrav', class: 'in', style: 'max-width:300px', onChange: (e) => { d.fTrav = e.target.value; vueFiches(); } },
-    h('option', { value: 'tous' }, 'Tous les travailleurs'), liste.map((l) => h('option', { value: l.w.id }, l.w.nom + ' ' + l.w.prenom)));
+    h('option', { value: 'tous' }, 'Tous les travailleurs'), liste.map((w) => h('option', { value: w.id }, w.nom + ' ' + w.prenom)));
   selT.value = d.fTrav;
+
+  // Choix de la période : de ... à ... (jusqu'à 12 mois)
+  const now = new Date();
+  const finListe = [cleMois(now.getFullYear(), now.getMonth()), cleMois(d.annee, d.mois), d.fA].sort().pop();
+  const options = [];
+  for (let i = 23; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    options.push(cleMois(dt.getFullYear(), dt.getMonth()));
+  }
+  [d.fDe, d.fA, cleMois(d.annee, d.mois)].forEach((c) => { if (!options.includes(c)) options.push(c); });
+  options.sort();
+  const optMois = () => options.map((c) => { const m = moisDeCle(c); return h('option', { value: c }, libelleMois(m.annee, m.mois)); });
+  void finListe;
+  const selDe = h('select', { id: 'fDe', class: 'in', style: 'max-width:240px', onChange: (e) => { d.fDe = e.target.value; if (d.fA < d.fDe) d.fA = d.fDe; chargerFiches(); } }, optMois());
+  selDe.value = d.fDe;
+  const selFin = h('select', { id: 'fA', class: 'in', style: 'max-width:240px', onChange: (e) => { d.fA = e.target.value; if (d.fDe > d.fA) d.fDe = d.fA; chargerFiches(); } }, optMois());
+  selFin.value = d.fA;
+  const titrePeriode = mois.length > 1
+    ? libelleMois(mois[0].annee, mois[0].mois) + ' à ' + libelleMois(mois[mois.length - 1].annee, mois[mois.length - 1].mois)
+    : (mois.length ? libelleMois(mois[0].annee, mois[0].mois) : '');
+
+  const pages = [];
+  choisis.forEach((w) => mois.forEach((k) => {
+    const l = k.details.find((x) => x.w.id === w.id);
+    if (l) pages.push(ficheTravailleur(d, l, nomAtelier(w.atelier_id), k));
+  }));
 
   render(pageAvec([
     h('div', { class: 'noprint stack' },
       h('div', { class: 'stack', style: 'gap:6px' },
         h('p', { class: 'muted' }, d.esat),
-        h('h1', {}, 'Fiches mensuelles · ' + libelleMois(d.annee, d.mois))),
-      h('p', { class: 'muted' }, 'Une page par travailleur. Cliquez sur « Imprimer ou enregistrer en PDF » : dans la fenêtre qui s’ouvre, choisissez votre imprimante, ou « Enregistrer au format PDF ». Pour changer de mois, revenez au tableau de bord.'),
+        h('h1', {}, 'Fiches mensuelles' + (titrePeriode ? ' · ' + titrePeriode : ''))),
+      h('p', { class: 'muted' }, 'Une page par travailleur et par mois. Choisissez un seul mois ou une période (par exemple septembre à octobre, 12 mois au maximum), puis cliquez sur « Imprimer ou enregistrer en PDF » : dans la fenêtre qui s’ouvre, choisissez votre imprimante, ou « Enregistrer au format PDF ».'),
       h('div', { class: 'row', style: 'justify-content:flex-start;align-items:flex-end' },
+        h('div', {}, h('label', { class: 'lbl', for: 'fDe' }, 'Du mois de'), selDe),
+        h('div', {}, h('label', { class: 'lbl', for: 'fA' }, 'Au mois de'), selFin),
         h('div', {}, h('label', { class: 'lbl', for: 'fAtelier' }, 'Atelier'), selA),
         h('div', {}, h('label', { class: 'lbl', for: 'fTrav' }, 'Travailleur'), selT)),
+      d.fErr ? h('p', { class: 'err', role: 'alert' }, d.fErr) : null,
       h('div', { class: 'row', style: 'justify-content:flex-start' },
-        h('button', { type: 'button', class: 'primary', disabled: choisis.length === 0, onClick: () => window.print() },
-          'Imprimer ou enregistrer en PDF' + (choisis.length > 1 ? ' (' + choisis.length + ' fiches)' : '')),
+        h('button', { type: 'button', class: 'primary', disabled: d.fCharge || nbFiches === 0, onClick: () => window.print() },
+          'Imprimer ou enregistrer en PDF' + (nbFiches > 1 ? ' (' + nbFiches + ' fiches)' : '')),
         h('button', { type: 'button', class: 'secondary', onClick: () => vueAdminEsat() }, '‹ Retour au tableau de bord'))),
-    choisis.length === 0
-      ? h('p', { class: 'noprint' }, 'Aucun travailleur à afficher pour ce choix.')
-      : h('div', { class: 'fiches' }, choisis.map((l) => ficheTravailleur(d, l, nomAtelier(l.w.atelier_id), jusqua)))
+    d.fCharge
+      ? h('p', { class: 'noprint muted', role: 'status' }, 'Chargement des mois…')
+      : (pages.length === 0
+        ? h('p', { class: 'noprint' }, 'Aucun travailleur à afficher pour ce choix.')
+        : h('div', { class: 'fiches' }, pages))
   ], false));
 }
 
