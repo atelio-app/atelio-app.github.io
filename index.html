@@ -157,6 +157,31 @@ table.saisie .in.motif{min-height:44px;max-width:300px;padding:6px 14px}
 .sign{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .sign>div{border:1px solid var(--bord);border-radius:12px;height:84px;padding:6px 12px;font-size:14px;color:var(--gris)}
 
+/* --- Accueil : deux colonnes --- */
+.accueil{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:24px;align-items:start}
+.accueil.seul{grid-template-columns:minmax(0,760px)}
+@media (max-width:1000px){.accueil{grid-template-columns:minmax(0,1fr)}}
+.etat{display:inline-block;padding:3px 12px;border-radius:999px;font-size:13px;font-weight:600;background:#e6f0ff;color:var(--cobalt)}
+.etat.val{background:#e8f3e6;color:#1f5e2a}
+.etat.rien{background:var(--brume);color:var(--gris)}
+.avance{font-size:20px}.avance strong{font-size:44px;font-weight:700;letter-spacing:-.02em;margin-right:6px}
+.sem{display:flex;gap:10px;align-items:flex-end}
+.sem-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+.sem-val{font-size:14px;font-weight:700}
+.sem-piste{width:100%;height:110px;background:var(--brume);border-radius:8px;display:flex;align-items:flex-end;overflow:hidden}
+.sem-barre{width:100%;background:var(--vert);border-radius:6px 6px 0 0}
+.sem-j{font-size:13px;color:var(--gris);font-weight:600}
+.sem-col.auj .sem-j{color:var(--signal)}
+.tuiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.tuile{display:flex;flex-direction:column;gap:4px;align-items:flex-start;padding:12px;border-radius:12px;border:1px solid var(--filet);background:#fff;font-family:inherit;color:var(--encre);text-align:left}
+button.tuile{cursor:pointer}button.tuile:hover{border-color:var(--bord)}
+.tuile-j{font-weight:700;font-size:16px}.tuile-t{font-size:13px;font-weight:600}
+.tuile.val{background:#e8f3e6;border-color:#bfe0c1;color:#1f5e2a}
+.tuile.manque{background:#fdf0e6;border-color:#f3cdb0;color:#8a3b00}
+.tuile.cours{background:#e6f0ff;border-color:#c7dcff;color:var(--cobalt)}
+.tuile.futur,.tuile.ferme{background:var(--brume);color:var(--gris)}
+.tuile.auj{box-shadow:0 0 0 2px var(--signal)}
+
 /* --- Reporting --- */
 .rapport{display:flex;flex-direction:column;gap:24px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px}
@@ -217,6 +242,9 @@ details.donnees .scroll{margin-top:8px}
 
 /* --- V21 : identité ESAT, planning, journal, aide, maquette --- */
 .marques{display:flex;align-items:center;gap:18px;min-width:0}
+.top-droite{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px 16px;margin-left:auto;min-width:0}
+.top-droite .tabs{justify-content:flex-end}
+.page>div:empty{display:none}
 .logo-esat{height:40px;width:auto;max-width:170px;object-fit:contain;padding-left:18px;border-left:1px solid var(--filet)}
 .apercu-logo{width:240px;height:110px;border:1px dashed var(--bord);border-radius:20px;background:#fff;display:flex;align-items:center;justify-content:center;padding:10px;text-align:center}
 .apercu-logo img{max-width:100%;max-height:100%;object-fit:contain}

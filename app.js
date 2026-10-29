@@ -80,7 +80,9 @@ function champ(id, libelle, input) {
 }
 
 function pageAvec(contenu, large) {
-  return h('div', {}, entete(), h('main', { class: 'page' + (large ? ' large' : '') }, contenu));
+  const actif = S.navActif;
+  S.navActif = undefined;   // l'onglet actif n'est valable que pour cette page
+  return h('div', {}, entete(actif), h('main', { class: 'page' + (large ? ' large' : '') }, contenu));
 }
 
 async function deconnexion() {
@@ -115,7 +117,7 @@ function fermerMenu(rendreFocus) {
 document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('.avatar-wrap')) fermerMenu(false); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fermerMenu(true); });
 
-function entete() {
+function entete(actif) {
   const p = S.profil;
   const aller = (f) => () => { fermerMenu(false); f(); };
   const menu = h('div', { class: 'menu', id: 'menu-compte', hidden: true, role: 'group', 'aria-label': 'Mon compte' },
@@ -136,11 +138,16 @@ function entete() {
     h('div', { class: 'marques' },
       h('img', { class: 'logo', src: 'logo.png', alt: 'Atelio' }),
       S.marque && logoSur(S.marque.logo) ? h('img', { class: 'logo-esat', src: logoSur(S.marque.logo), alt: 'Logo ' + (S.marque.nom || 'de l’ESAT') }) : null),
-    h('div', { class: 'avatar-wrap' }, bouton, menu));
+    h('div', { class: 'top-droite' },
+      actif !== undefined && p ? onglets(actif) : null,
+      h('div', { class: 'avatar-wrap' }, bouton, menu)));
 }
 
 // Navigation principale, différente selon le rôle
-function navPrincipale(actif) {
+// Les onglets sont dessinés dans l'en-tête (en haut à droite) : cette fonction se contente de dire quel onglet est actif.
+function navPrincipale(actif) { S.navActif = actif; return null; }
+
+function onglets(actif) {
   const role = S.profil && S.profil.role;
   const onglets = [['accueil', 'Accueil', () => chargerAccueil()]];
   if (role === 'moniteur') onglets.push(['saisie', 'Saisie du jour', () => chargerMoniteur()]);
@@ -171,6 +178,20 @@ function cleFait(r) { return 'atelio-fait-' + (S.user ? S.user.id : '') + '-' + 
 function lireFait(r) { try { return localStorage.getItem(cleFait(r)) === '1'; } catch (e) { return false; } }
 function ecrireFait(r, v) { try { if (v) localStorage.setItem(cleFait(r), '1'); else localStorage.removeItem(cleFait(r)); } catch (e) { /* facultatif */ } }
 
+// Les 5 jours (lundi à vendredi) de la semaine en cours
+function semaineCourante() {
+  const n = new Date();
+  const lundi = new Date(n.getFullYear(), n.getMonth(), n.getDate() - ((n.getDay() + 6) % 7));
+  const lettres = ['L', 'M', 'M', 'J', 'V'];
+  const noms = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'];
+  const auj = aujourdhuiISO();
+  return Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(lundi.getFullYear(), lundi.getMonth(), lundi.getDate() + i);
+    const iso = isoDe(d);
+    return { iso, annee: d.getFullYear(), num: d.getDate(), lettre: lettres[i], nom: noms[i], aujourdhui: iso === auj, futur: iso > auj };
+  });
+}
+
 // --- Accueil
 async function chargerAccueil() {
   S.abs = null;
@@ -180,28 +201,40 @@ async function chargerAccueil() {
   const info = { role };
   try {
     if (role === 'moniteur') {
-      const [tr, pr, va] = await Promise.all([
-        sb.from('travailleurs').select('id').eq('actif', true),
-        sb.from('presences').select('id, statut_id').eq('jour', jour),
-        sb.from('journees_validees').select('atelier_id').eq('jour', jour)
+      const sem = semaineCourante();
+      const [tr, pr, va, vs, fe] = await Promise.all([
+        sb.from('travailleurs').select('*').eq('actif', true),
+        sb.from('presences').select('travailleur_id, statut_id').eq('jour', jour),
+        sb.from('journees_validees').select('atelier_id').eq('jour', jour),
+        sb.from('journees_validees').select('jour').gte('jour', sem[0].iso).lte('jour', sem[4].iso),
+        sb.from('jours_fermes').select('jour, motif').gte('jour', sem[0].iso).lte('jour', sem[4].iso)
       ]);
       if (!tr.error && !pr.error && !va.error) {
-        const ids = new Set((tr.data || []).map((w) => w.id));
-        info.total = ids.size;
-        info.faits = (pr.data || []).length;
+        const saisis = new Set((pr.data || []).map((x) => x.travailleur_id));
+        const attendus = (tr.data || []).filter((w) => creneau(w, jour) || saisis.has(w.id));
+        info.total = attendus.length;
+        info.faits = attendus.filter((w) => saisis.has(w.id)).length;
+        info.absents = (tr.data || []).length - attendus.length;
         info.valide = (va.data || []).length > 0;
+        const valides = new Set(!vs.error ? (vs.data || []).map((x) => x.jour) : []);
+        const fermes = mapFermes(!fe.error ? (fe.data || []) : [], [sem[0].annee, sem[4].annee]);
+        info.semaine = sem.map((j) => ({ ...j, valide: valides.has(j.iso), ferie: fermes[j.iso] || '' }));
       }
     } else if (role === 'admin_esat') {
       const prec = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
       const precDebut = premierDuMois(prec.getFullYear(), prec.getMonth());
       const precFin = isoJour(prec.getFullYear(), prec.getMonth(), nbJours(prec.getFullYear(), prec.getMonth()));
-      const [at, tr, pr, va, clo, anc] = await Promise.all([
+      const sem = semaineCourante();
+      const [at, tr, pr, va, clo, anc, ps, st, fe] = await Promise.all([
         sb.from('ateliers').select('id, nom').eq('esat_id', S.profil.esat_id).order('nom'),
-        sb.from('travailleurs').select('id, atelier_id').eq('actif', true),
+        sb.from('travailleurs').select('*').eq('actif', true),
         sb.from('presences').select('travailleur_id').eq('jour', jour),
         sb.from('journees_validees').select('atelier_id').eq('jour', jour),
         sb.from('mois_clotures').select('mois').eq('mois', precDebut).maybeSingle(),
-        sb.from('presences').select('id').gte('jour', precDebut).lte('jour', precFin).limit(1)
+        sb.from('presences').select('id').gte('jour', precDebut).lte('jour', precFin).limit(1),
+        sb.from('presences').select('jour, statut_id').gte('jour', sem[0].iso).lte('jour', sem[4].iso).limit(5000),
+        sb.from('statuts').select('id, code, esat_id'),
+        sb.from('jours_fermes').select('jour, motif').gte('jour', sem[0].iso).lte('jour', sem[4].iso)
       ]);
       if (!clo.error && !anc.error && !clo.data && (anc.data || []).length > 0) {
         info.aCloturer = { annee: prec.getFullYear(), mois: prec.getMonth() };
@@ -211,7 +244,17 @@ async function chargerAccueil() {
         const valides = new Set((va.data || []).map((x) => x.atelier_id));
         info.ateliers = (at.data || []).map((a) => {
           const membres = (tr.data || []).filter((w) => w.atelier_id === a.id);
-          return { nom: a.nom, total: membres.length, faits: membres.filter((w) => saisis.has(w.id)).length, valide: valides.has(a.id) };
+          const attendus = membres.filter((w) => creneau(w, jour) || saisis.has(w.id));
+          return { nom: a.nom, total: attendus.length, faits: attendus.filter((w) => saisis.has(w.id)).length, valide: valides.has(a.id) };
+        });
+      }
+      if (!ps.error && !st.error) {
+        const idP = ((st.data || []).find((x) => x.code === 'P' && !x.esat_id) || {}).id;
+        const fermes = mapFermes(!fe.error ? (fe.data || []) : [], [sem[0].annee, sem[4].annee]);
+        info.semaine = sem.map((j) => {
+          const lignes = (ps.data || []).filter((x) => x.jour === j.iso);
+          const presents = lignes.filter((x) => x.statut_id === idP).length;
+          return { ...j, saisis: lignes.length, presents, taux: lignes.length ? Math.round((presents / lignes.length) * 100) : null, ferie: fermes[j.iso] || '' };
         });
       }
     } else {
@@ -237,18 +280,11 @@ function blocAFaire(info) {
       h('button', { type: 'button', class: 'primary', onClick: () => chargerMoniteur() }, info.valide ? 'Voir la saisie du jour' : 'Saisir la présence du jour'));
   }
   if (role === 'admin_esat') {
-    const etat = (a) => (a.valide ? 'Validée' : (a.faits > 0 ? 'En cours (' + a.faits + '/' + a.total + ')' : (a.total === 0 ? 'Aucun travailleur' : 'Pas commencée')));
     return h('section', { class: 'banner stack', 'aria-labelledby': 't-afaire', style: 'align-items:flex-start' },
       h('h2', { id: 't-afaire' }, 'À faire aujourd’hui'),
       h('p', { style: 'font-weight:430' }, 'Vérifiez que chaque atelier a validé sa journée, puis consultez le tableau de bord ou les fiches mensuelles pour la paie.'),
-      info.ateliers && info.ateliers.length
-        ? h('ul', { class: 'list', style: 'gap:6px;font-weight:430;font-size:17px' }, info.ateliers.map((a) => h('li', {}, h('strong', {}, a.nom + ' : '), etat(a))))
-        : null,
       info.aCloturer ? h('p', { style: 'font-weight:430' }, '🔒 ' + libelleMois(info.aCloturer.annee, info.aCloturer.mois) + ' est terminé mais pas encore clôturé. Clôturez-le une fois la paie préparée, pour que personne ne le modifie par erreur.') : null,
-      h('div', { class: 'row', style: 'justify-content:flex-start' },
-        h('button', { type: 'button', class: 'primary', onClick: () => chargerAdminEsat() }, 'Ouvrir le tableau de bord'),
-        info.aCloturer ? h('button', { type: 'button', class: 'secondary', onClick: () => chargerReporting(info.aCloturer) }, 'Clôturer ' + minuscule(libelleMois(info.aCloturer.annee, info.aCloturer.mois))) : null,
-        h('button', { type: 'button', class: 'secondary', onClick: () => chargerGestion() }, 'Gérer l’ESAT')));
+      h('div', {}, h('button', { type: 'button', class: 'primary', onClick: () => chargerAdminEsat() }, 'Ouvrir le tableau de bord')));
   }
   return h('section', { class: 'banner stack', 'aria-labelledby': 't-afaire', style: 'align-items:flex-start' },
     h('h2', { id: 't-afaire' }, 'À faire aujourd’hui'),
@@ -260,6 +296,105 @@ function rappelsDuJour() {
   const g = new Date().getDay();
   return (S.prefs.rappels || []).filter((r) => (r.jours || []).includes(g))
     .sort((a, b) => (a.heure || '99:99').localeCompare(b.heure || '99:99'));
+}
+
+// ----- Colonne de droite de l'accueil
+const carteAccueil = (id, titre, ...contenu) => h('section', { class: 'card stack carte-acc', 'aria-labelledby': id }, h('h2', { id }, titre), contenu);
+
+function blocCetteSemaine(info) {
+  if (!info.semaine) return null;
+  const jours = info.semaine;
+  const colonnes = jours.map((j) => {
+    const aTaux = j.taux !== null && j.taux !== undefined;
+    const etiquette = aTaux ? j.taux + ' %' : (j.ferie ? 'Férié' : '–');
+    const titre = j.nom + ' ' + j.num + ' : ' + (aTaux ? j.presents + ' présents sur ' + j.saisis + ' renseignés (' + j.taux + ' %)' : (j.ferie ? j.ferie : (j.futur ? 'à venir' : 'rien de saisi')));
+    return h('div', { class: 'sem-col' + (j.aujourdhui ? ' auj' : ''), title: titre },
+      h('span', { class: 'sem-val' }, etiquette),
+      h('div', { class: 'sem-piste' }, aTaux ? h('div', { class: 'sem-barre', style: 'height:' + Math.max(4, j.taux) + '%' }) : null),
+      h('span', { class: 'sem-j' }, j.lettre + ' ' + j.num));
+  });
+  const moyenne = (() => {
+    const p = jours.reduce((t, j) => t + (j.presents || 0), 0); const sa = jours.reduce((t, j) => t + (j.saisis || 0), 0);
+    return sa ? Math.round((p / sa) * 100) : null;
+  })();
+  return carteAccueil('t-sem', 'Cette semaine',
+    h('p', { class: 'muted' }, moyenne === null ? 'Aucune présence saisie pour l’instant cette semaine.' : 'Taux de présence : ' + moyenne + ' % depuis lundi.'),
+    h('div', { class: 'sem', role: 'group', 'aria-label': 'Taux de présence par jour, du lundi au vendredi' }, colonnes));
+}
+
+function blocAteliersAujourdhui(info) {
+  if (!info.ateliers) return null;
+  const etat = (a) => (a.valide ? ['Validée', 'val'] : (a.faits > 0 ? ['En cours', 'cours'] : (a.total === 0 ? ['Aucun travailleur', 'rien'] : ['Pas commencée', 'rien'])));
+  return carteAccueil('t-ateliers', 'Ateliers aujourd’hui',
+    info.ateliers.length === 0
+      ? h('p', { class: 'muted' }, 'Aucun atelier pour l’instant. Créez-les dans « Gérer l’ESAT ».')
+      : h('ul', { class: 'list', style: 'gap:14px' }, info.ateliers.map((a) => {
+          const [texte, cl] = etat(a);
+          const pct = a.total ? Math.round((a.faits / a.total) * 100) : 0;
+          return h('li', { class: 'stack', style: 'gap:6px' },
+            h('div', { class: 'row', style: 'gap:8px' },
+              h('strong', {}, a.nom),
+              h('span', { class: 'etat ' + cl }, (a.valide ? '✓ ' : '') + texte)),
+            h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(a.total), 'aria-valuenow': String(a.faits), 'aria-label': a.nom + ' : ' + a.faits + ' sur ' + a.total + ' renseignés' },
+              h('div', { style: 'width:' + pct + '%' })),
+            h('span', { class: 'muted', style: 'font-size:14px' }, a.faits + ' sur ' + a.total + ' renseigné' + (a.faits > 1 ? 's' : '')));
+        })));
+}
+
+async function ouvrirFichesDuMois() {
+  await chargerAdminEsat();
+  const d = S.d; if (!d || !d.calc) return;
+  const m0 = cleMois(d.annee, d.mois);
+  d.fAtelier = 'tous'; d.fTrav = 'tous'; d.fDe = m0; d.fA = m0;
+  chargerFiches();
+}
+
+async function ouvrirAjoutTravailleur() {
+  await chargerGestion();
+  const champ_ = document.getElementById('nvNom');
+  if (champ_) { champ_.scrollIntoView({ block: 'center' }); champ_.focus(); }
+}
+
+function blocRaccourcis(info) {
+  const b = (texte, f, primaire) => h('button', { type: 'button', class: primaire ? 'primary' : 'secondary', onClick: f }, texte);
+  return carteAccueil('t-rac', 'Raccourcis',
+    h('div', { class: 'row', style: 'justify-content:flex-start;gap:10px' },
+      info.aCloturer ? b('Clôturer ' + minuscule(libelleMois(info.aCloturer.annee, info.aCloturer.mois)), () => chargerReporting(info.aCloturer), true) : null,
+      b('Fiches mensuelles du mois (PDF)', ouvrirFichesDuMois, !info.aCloturer),
+      b('Ajouter un travailleur', ouvrirAjoutTravailleur),
+      b('Prévoir une absence', () => chargerPlanning())));
+}
+
+function blocAvancementJour(info) {
+  if (info.total === undefined) return null;
+  const pct = info.total ? Math.round((info.faits / info.total) * 100) : 0;
+  return carteAccueil('t-avance', 'Avancement du jour',
+    h('p', { class: 'avance' }, h('strong', {}, String(info.faits)), ' sur ' + info.total, h('span', { class: 'muted' }, info.total > 1 ? ' personnes renseignées' : ' personne renseignée')),
+    h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(info.total), 'aria-valuenow': String(info.faits), 'aria-label': 'Avancement de la saisie du jour' }, h('div', { style: 'width:' + pct + '%' })),
+    h('div', {}, h('span', { class: 'etat ' + (info.valide ? 'val' : (info.faits > 0 ? 'cours' : 'rien')) },
+      info.valide ? '✓ Journée validée' : (info.faits > 0 ? 'En cours' : 'Pas commencée'))),
+    info.absents > 0 ? h('p', { class: 'muted', style: 'font-size:15px' }, info.absents + (info.absents > 1 ? ' personnes ne travaillent pas' : ' personne ne travaille pas') + ' aujourd’hui (selon leurs horaires).') : null);
+}
+
+function blocSemaineMoniteur(info) {
+  if (!info.semaine) return null;
+  const min = decalerJour(aujourdhuiISO(), -JOURS_ARRIERE_MAX);
+  const tuiles = info.semaine.map((j) => {
+    let texte, cl;
+    if (j.ferie) { texte = 'Férié'; cl = 'ferme'; }
+    else if (j.valide) { texte = '✓ Validée'; cl = 'val'; }
+    else if (j.futur) { texte = 'À venir'; cl = 'futur'; }
+    else if (j.aujourdhui) { texte = 'À valider'; cl = 'cours'; }
+    else { texte = 'Non validée'; cl = 'manque'; }
+    const cliquable = !j.futur && j.iso >= min;
+    return h(cliquable ? 'button' : 'div', {
+      type: cliquable ? 'button' : null, class: 'tuile ' + cl + (j.aujourdhui ? ' auj' : ''),
+      title: j.nom + ' ' + j.num + ' : ' + texte, onClick: cliquable ? () => chargerMoniteur(j.iso) : null
+    }, h('span', { class: 'tuile-j' }, j.lettre + ' ' + j.num), h('span', { class: 'tuile-t' }, texte));
+  });
+  return carteAccueil('t-semm', 'Ma semaine',
+    h('p', { class: 'muted' }, 'Cliquez sur un jour pour ouvrir sa saisie et rattraper une journée non validée.'),
+    h('div', { class: 'tuiles', role: 'group', 'aria-label': 'Journées de la semaine' }, tuiles));
 }
 
 function vueAccueil() {
@@ -279,19 +414,29 @@ function vueAccueil() {
         return h('li', { class: 'rappel' }, coche, h('label', { for: id }, texte));
       }));
 
+  const role = info.role;
+  const aside = role === 'admin_esat'
+    ? [blocAteliersAujourdhui(info), blocCetteSemaine(info)]
+    : (role === 'moniteur' ? [blocAvancementJour(info), blocSemaineMoniteur(info)] : []);
+  const droite = aside.filter(Boolean);
+
   render(pageAvec([
     navPrincipale('accueil'),
     h('div', { class: 'stack', style: 'gap:6px' },
       h('p', { class: 'muted' }, dateLongue()),
       h('h1', {}, prenom ? ['Bonjour ', h('em', {}, prenom)] : 'Bonjour')),
-    blocAFaire(info),
-    h('section', { class: 'card stack', 'aria-labelledby': 't-rappels' },
-      h('div', { class: 'row' },
-        h('h2', { id: 't-rappels' }, 'Mes rappels du jour'),
-        h('button', { type: 'button', class: 'linkbtn', onClick: () => vueCompte() }, 'Gérer mes rappels')),
-      liste),
-    prenom ? null : h('p', { class: 'muted' }, 'Astuce : ajoutez votre prénom dans « Mon compte » pour personnaliser cet accueil.'),
-    h('p', { class: 'muted' }, 'Une question ? ', h('button', { type: 'button', class: 'linkbtn', onClick: () => vueAide() }, 'Ouvrir l’aide et le support'))
+    h('div', { class: 'accueil' + (droite.length ? '' : ' seul') },
+      h('div', { class: 'stack', style: 'gap:24px;min-width:0' },
+        blocAFaire(info),
+        role === 'admin_esat' ? blocRaccourcis(info) : null,
+        h('section', { class: 'card stack', 'aria-labelledby': 't-rappels' },
+          h('div', { class: 'row' },
+            h('h2', { id: 't-rappels' }, 'Mes rappels du jour'),
+            h('button', { type: 'button', class: 'linkbtn', onClick: () => vueCompte() }, 'Gérer mes rappels')),
+          liste),
+        prenom ? null : h('p', { class: 'muted' }, 'Astuce : ajoutez votre prénom dans « Mon compte » pour personnaliser cet accueil.'),
+        h('p', { class: 'muted' }, 'Une question ? ', h('button', { type: 'button', class: 'linkbtn', onClick: () => vueAide() }, 'Ouvrir l’aide et le support'))),
+      droite.length ? h('div', { class: 'stack', style: 'gap:24px;min-width:0' }, droite) : null)
   ]));
 }
 
