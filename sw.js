@@ -1,7 +1,7 @@
 // Atelio : service de l'application installée.
 // Stratégie « réseau d'abord » : l'application est toujours à jour dès qu'on a du réseau ;
 // la copie en mémoire ne sert qu'en secours si la connexion tombe. Les données (Supabase) ne sont jamais mises en mémoire.
-const CACHE = 'atelio-v1';
+const CACHE = 'atelio-v2';
 const FICHIERS = ['./', 'index.html', 'app.js', 'logo.png', 'favicon.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -18,7 +18,7 @@ self.addEventListener('fetch', (e) => {
   const r = e.request;
   if (r.method !== 'GET' || new URL(r.url).origin !== self.location.origin) return;
   e.respondWith(
-    fetch(r).then((rep) => {
+    fetch(r, { cache: 'no-cache' }).then((rep) => {
       if (rep && rep.ok) { const copie = rep.clone(); caches.open(CACHE).then((c) => c.put(r, copie)).catch(() => {}); }
       return rep;
     }).catch(() => caches.match(r).then((m) => m || caches.match('index.html')))
