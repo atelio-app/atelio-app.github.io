@@ -2223,8 +2223,9 @@ function graphique(dessiner, description) {
 // Rend une marque sensible au survol ET au clavier
 function sensible(el, montrer, outils) {
   el.setAttribute('tabindex', '0');
-  const bord = () => { const b = el.getBoundingClientRect(), p = el.closest('svg').getBoundingClientRect(); return [b.left - p.left + b.width / 2, b.top - p.top]; };
-  el.addEventListener('pointermove', (e) => { const p = el.closest('svg').getBoundingClientRect(); montrer(e.clientX - p.left, e.clientY - p.top); });
+  const echelle = () => { const sv = el.closest('svg'); const r = sv.getBoundingClientRect(); return r.width && sv.clientWidth ? r.width / sv.clientWidth : 1; };   // tient compte du zoom de la page
+  const bord = () => { const b = el.getBoundingClientRect(), p = el.closest('svg').getBoundingClientRect(), k = echelle(); return [(b.left - p.left + b.width / 2) / k, (b.top - p.top) / k]; };
+  el.addEventListener('pointermove', (e) => { const p = el.closest('svg').getBoundingClientRect(), k = echelle(); montrer((e.clientX - p.left) / k, (e.clientY - p.top) / k); });
   el.addEventListener('pointerleave', outils.cacher);
   el.addEventListener('focus', () => { const [x, y] = bord(); montrer(x, y); });
   el.addEventListener('blur', outils.cacher);
@@ -2299,7 +2300,7 @@ function grapheTendance(r) {
     const zone = sv('rect', { x: M.g, y: 0, width: w - M.g - M.d, height: H - M.b, fill: 'transparent' });
     zone.addEventListener('pointermove', (ev) => {
       const b = svg.getBoundingClientRect();
-      const i = Math.max(0, Math.min(serie.length - 1, Math.floor((ev.clientX - b.left - M.g) / bande)));
+      const i = Math.max(0, Math.min(serie.length - 1, Math.floor(((ev.clientX - b.left) / ((b.width && svg.clientWidth) ? b.width / svg.clientWidth : 1) - M.g) / bande)));
       survol(i);
     });
     zone.addEventListener('pointerleave', () => { repere.setAttribute('visibility', 'hidden'); o.cacher(); });

@@ -21,6 +21,7 @@
   --ombre:0 0 0 1px rgba(4,23,43,.05),0 20px 25px -5px rgba(0,0,0,.08),0 8px 10px -6px rgba(0,0,0,.08);
 }
 *{box-sizing:border-box}
+html{zoom:.85}
 body{margin:0;background:var(--papier);font-family:var(--sans);font-weight:430;color:var(--encre);font-size:17px;line-height:1.4}
 button,input,select{font-family:inherit}
 button{cursor:pointer}
@@ -250,6 +251,7 @@ details.faq[open] summary::after{content:"–"}
 .maq-leg{font-size:12px}
 @media (max-width:700px){.fiche-jours-wrap,.sign{grid-template-columns:1fr}.top{padding:16px}.page{padding:8px 16px 64px}}
 @media print{
+html{zoom:1}
   @page{size:A4 portrait;margin:12mm}
   @page maquette{size:A4 landscape;margin:10mm}
   html,body{background:#fff}
