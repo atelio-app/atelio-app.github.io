@@ -158,6 +158,12 @@ table.saisie .in.motif{min-height:44px;max-width:300px;padding:6px 14px}
 .sign>div{border:1px solid var(--bord);border-radius:12px;height:84px;padding:6px 12px;font-size:14px;color:var(--gris)}
 
 /* --- Accueil : deux colonnes --- */
+.annonces{gap:10px;margin-bottom:20px}
+.annonce{background:#eaf2ff;border:1px solid #b9d3ff;border-left:6px solid var(--signal);border-radius:12px;padding:14px 18px}
+.annonce.ed{background:#fff6e0;border-color:#f3d58a;border-left-color:#e8a200}
+.annonce small{display:block;font-weight:700;color:var(--encre);margin-bottom:2px}
+.annonce p{font-size:17px;overflow-wrap:anywhere}
+.msg-li{display:flex;justify-content:space-between;align-items:center;gap:14px;border:1px solid var(--filet);border-radius:12px;padding:12px 14px}
 .accueil{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:24px;align-items:start}
 .accueil.seul{grid-template-columns:minmax(0,760px)}
 @media (max-width:1000px){.accueil{grid-template-columns:minmax(0,1fr)}}
