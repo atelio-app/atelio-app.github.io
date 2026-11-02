@@ -79,6 +79,28 @@ function champ(id, libelle, input) {
   return h('div', {}, h('label', { class: 'lbl', for: id }, libelle), input);
 }
 
+// FONCTIONS À ACTIVER PAR ESAT. « defaut » = valeur tant que l'éditeur n'a rien choisi.
+// Pour tester une nouveauté chez un seul ESAT : ajouter une ligne ici avec defaut: false,
+// puis protéger la nouveauté avec aFonction('ma_cle') ; l'éditeur l'active pour l'ESAT voulu.
+const FONCTIONS = [
+  { cle: 'reporting', nom: 'Reporting et clôture des mois', desc: 'Graphiques et analyses des présences, et clôture mensuelle pour la paie.', defaut: true },
+  { cle: 'planning', nom: 'Planning et absences prévues', desc: 'Jours de fermeture et absences planifiées (congés, formations).', defaut: true },
+  { cle: 'journal', nom: 'Journal des modifications', desc: 'Historique de qui a saisi ou modifié quoi.', defaut: true },
+  { cle: 'messages', nom: 'Messages de la direction sur l’accueil', desc: 'L’administrateur peut afficher un message sur l’accueil des moniteurs.', defaut: true },
+  { cle: 'cantine', nom: 'Cantine (repas)', desc: 'Le moniteur précise si une personne présente mange à la cantine. Ajoute la colonne Repas au tableau de bord et des graphiques de repas (avec prévision du jour) au reporting.', defaut: false }
+];
+// Colonnes lues dans « presences » : « cantine » seulement si la fonction est activée (la colonne doit alors exister en base)
+const colsPresences = (base) => base + (aFonction('cantine') ? ', cantine' : '');
+// Message clair quand la colonne « cantine » n'existe pas encore en base (atelio-v27.sql non lancé)
+const messageBase = (error) => (/cantine/i.test(error.message || '') ? 'La cantine n’est pas encore prête : l’éditeur doit exécuter atelio-v27.sql dans Supabase.' : 'Enregistrement impossible : ' + error.message);
+function aFonction(cle) {
+  if (S.profil && S.profil.role === 'super_admin') return true;
+  const f = S.marque && S.marque.fonctions;
+  if (f && typeof f[cle] === 'boolean') return f[cle];
+  const d = FONCTIONS.find((x) => x.cle === cle);
+  return d ? d.defaut : false;
+}
+
 // Un statut « compte comme une présence » si c'est « Présent » (statut de base) ou si l'ESAT l'a coché.
 function estPresence(s) { return !!s && ((s.code === 'P' && !s.esat_id) || s.compte_presence === true); }
 function idsPresence(statuts) { return new Set((statuts || []).filter(estPresence).map((x) => x.id)); }
@@ -157,7 +179,7 @@ function onglets(actif) {
   const onglets = [['accueil', 'Accueil', () => chargerAccueil()]];
   if (role === 'moniteur') onglets.push(['saisie', 'Saisie du jour', () => chargerMoniteur()]);
   else if (role === 'super_admin') onglets.push(['editeur', 'Espace éditeur', () => chargerAdmin()]);
-  else onglets.push(['tableau', 'Tableau de bord', () => chargerAdminEsat()], ['reporting', 'Reporting', () => chargerReporting()], ['planning', 'Planning', () => chargerPlanning()], ['journal', 'Journal', () => chargerJournal()], ['gestion', 'Gérer l’ESAT', () => chargerGestion()], ['statuts', 'Statuts et motifs', () => chargerStatutsEsat()], ['parametres', 'Paramètres', () => chargerParametres()]);
+  else onglets.push(['tableau', 'Tableau de bord', () => chargerAdminEsat()], ...(aFonction('reporting') ? [['reporting', 'Reporting', () => chargerReporting()]] : []), ...(aFonction('planning') ? [['planning', 'Planning', () => chargerPlanning()]] : []), ...(aFonction('journal') ? [['journal', 'Journal', () => chargerJournal()]] : []), ['gestion', 'Gérer l’ESAT', () => chargerGestion()], ['statuts', 'Statuts et motifs', () => chargerStatutsEsat()], ['parametres', 'Paramètres', () => chargerParametres()]);
   return h('nav', { class: 'tabs', 'aria-label': 'Sections' }, onglets.map(([id, libelle, aller]) =>
     h('button', { type: 'button', class: 'tabbtn' + (actif === id ? ' on' : ''), 'aria-pressed': String(actif === id), onClick: aller }, libelle)));
 }
@@ -365,10 +387,10 @@ function blocRaccourcis(info) {
   const b = (texte, f, primaire) => h('button', { type: 'button', class: primaire ? 'primary' : 'secondary', onClick: f }, texte);
   return carteAccueil('t-rac', 'Raccourcis',
     h('div', { class: 'row', style: 'justify-content:flex-start;gap:10px' },
-      info.aCloturer ? b('Clôturer ' + minuscule(libelleMois(info.aCloturer.annee, info.aCloturer.mois)), () => chargerReporting(info.aCloturer), true) : null,
+      info.aCloturer && aFonction('reporting') ? b('Clôturer ' + minuscule(libelleMois(info.aCloturer.annee, info.aCloturer.mois)), () => chargerReporting(info.aCloturer), true) : null,
       b('Fiches mensuelles du mois (PDF)', ouvrirFichesDuMois, !info.aCloturer),
       b('Ajouter un travailleur', ouvrirAjoutTravailleur),
-      b('Prévoir une absence', () => chargerPlanning())));
+      aFonction('planning') ? b('Prévoir une absence', () => chargerPlanning()) : null));
 }
 
 function blocAvancementJour(info) {
@@ -705,16 +727,26 @@ async function chargerMoniteur(jourChoisi) {
     sb.from('esats').select('nom').eq('id', p.esat_id).maybeSingle(),
     sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('travailleurs').select('*').eq('atelier_id', p.atelier_id).eq('actif', true).order('nom').order('prenom'),
-    sb.from('presences').select('travailleur_id, statut_id').eq('jour', jour),
+    sb.from('presences').select(colsPresences('travailleur_id, statut_id')).eq('jour', jour),
     sb.from('journees_validees').select('atelier_id').eq('atelier_id', p.atelier_id).eq('jour', jour).maybeSingle(),
     sb.from('mois_clotures').select('mois').eq('mois', premierDuMois(+jour.slice(0, 4), +jour.slice(5, 7) - 1)).maybeSingle(),
     sb.from('absences_prevues').select('id, travailleur_id, statut_id, debut, fin, note').gte('fin', jour < aujourdhui ? jour : aujourdhui).order('debut'),
     sb.from('jours_fermes').select('motif').eq('jour', jour).maybeSingle()
   ]);
   const ko = [a, e, st, tr, pr, va].find((r) => r.error);
-  if (ko) return vueMessage('Chargement impossible', ko.error.message);
+  if (ko) return vueMessage('Chargement impossible', /cantine/i.test(ko.error.message || '') ? messageBase(ko.error) : ko.error.message);
 
   const saisieJour = Object.fromEntries(pr.data.map((r) => [r.travailleur_id, r.statut_id]));
+  // Cantine : valeur déjà saisie ce jour-là + habitude de chacun (dernière valeur connue) pour pré-remplir
+  const cantine = {}; const habitude = {};
+  if (aFonction('cantine')) {
+    pr.data.forEach((r) => { if (typeof r.cantine === 'boolean') cantine[r.travailleur_id] = r.cantine; });
+    try {
+      const hist = await sb.from('presences').select('travailleur_id, jour, cantine').not('cantine', 'is', null)
+        .lt('jour', jour).gte('jour', decalerJour(jour, -35)).order('jour', { ascending: false }).limit(2000);
+      if (!hist.error) (hist.data || []).forEach((r) => { if (!(r.travailleur_id in habitude)) habitude[r.travailleur_id] = r.cantine; });
+    } catch (e) { /* sans habitude : la cantine sera à préciser */ }
+  }
   const ferie = mapFermes(fe && !fe.error && fe.data ? [fe.data] : [], [+jour.slice(0, 4)])[jour] || '';
   const gJour = dateDepuisISO(jour).getDay();
   const prevu = {};
@@ -731,6 +763,7 @@ async function chargerMoniteur(jourChoisi) {
     statuts: st.data,
     travailleurs: tr.data,
     saisie: Object.fromEntries(pr.data.map((r) => [r.travailleur_id, r.statut_id])),
+    cantine, habitude,
     valide: !!va.data,
     verrou: !!(cl && !cl.error && cl.data),
     msg: ''
@@ -738,23 +771,52 @@ async function chargerMoniteur(jourChoisi) {
   vueMoniteur();
 }
 
+// Valeur de la cantine à enregistrer avec un statut : undefined = fonction inactive (on ne touche à rien),
+// null = non concerné ou à préciser, true/false = valeur déjà saisie ou habituelle de la personne.
+function cantinePour(travailleurId, statutId) {
+  if (!aFonction('cantine')) return undefined;
+  const m = S.m;
+  if (!estPresence(m.statuts.find((x) => x.id === statutId))) return null;
+  if (typeof m.cantine[travailleurId] === 'boolean') return m.cantine[travailleurId];
+  return typeof m.habitude[travailleurId] === 'boolean' ? m.habitude[travailleurId] : null;
+}
+
+async function choisirCantine(travailleurId, valeur) {
+  const m = S.m;
+  if (m.valide || m.verrou) return;
+  const avant = m.cantine[travailleurId];
+  m.cantine[travailleurId] = valeur;
+  m.msg = '';
+  vueMoniteur();
+  const { error } = await sb.from('presences').update({ cantine: valeur }).eq('travailleur_id', travailleurId).eq('jour', m.jour);
+  if (error) {
+    if (typeof avant === 'boolean') m.cantine[travailleurId] = avant; else delete m.cantine[travailleurId];
+    m.msg = messageBase(error);
+    vueMoniteur();
+  }
+}
+
 async function choisirStatut(travailleurId, statutId) {
   const m = S.m;
   if (m.valide || m.verrou) return;
   const avant = m.saisie[travailleurId];
+  const cantAvant = m.cantine[travailleurId];
+  const cant = cantinePour(travailleurId, statutId);
   const etaitPrevu = m.prevu[travailleurId];
+  if (cant === true || cant === false) m.cantine[travailleurId] = cant; else if (cant === null) delete m.cantine[travailleurId];
   m.saisie[travailleurId] = statutId;
   delete m.prevu[travailleurId];
   m.msg = '';
   vueMoniteur();
   const { error } = await sb.from('presences').upsert(
-    { esat_id: S.profil.esat_id, travailleur_id: travailleurId, jour: m.jour, statut_id: statutId, saisi_par: S.user.id },
+    { esat_id: S.profil.esat_id, travailleur_id: travailleurId, jour: m.jour, statut_id: statutId, saisi_par: S.user.id, ...(cant !== undefined ? { cantine: cant } : {}) },
     { onConflict: 'travailleur_id,jour' }
   );
   if (error) {
+    if (typeof cantAvant === 'boolean') m.cantine[travailleurId] = cantAvant; else delete m.cantine[travailleurId];
     if (avant) m.saisie[travailleurId] = avant; else delete m.saisie[travailleurId];
     if (etaitPrevu) m.prevu[travailleurId] = etaitPrevu;
-    m.msg = 'Enregistrement impossible : ' + error.message;
+    m.msg = messageBase(error);
     vueMoniteur();
   }
 }
@@ -765,20 +827,24 @@ async function toutLeMondePresent() {
   const present = m.statuts.find((s) => s.code === 'P' && !s.esat_id);
   if (!present) return;
   // Les absences prévues sont appliquées à la place de « Présent » pour les personnes concernées
-  const lignes = m.travailleurs.filter((w) => creneau(w, m.jour)).map((w) => ({
-    esat_id: S.profil.esat_id, travailleur_id: w.id, jour: m.jour, statut_id: m.prevu[w.id] || present.id, saisi_par: S.user.id
-  }));
+  const lignes = m.travailleurs.filter((w) => creneau(w, m.jour)).map((w) => {
+    const statutId = m.prevu[w.id] || present.id;
+    const cant = cantinePour(w.id, statutId);
+    return { esat_id: S.profil.esat_id, travailleur_id: w.id, jour: m.jour, statut_id: statutId, saisi_par: S.user.id, ...(cant !== undefined ? { cantine: cant } : {}) };
+  });
   const avant = { ...m.saisie };
+  const cantAvant = { ...m.cantine };
   const prevuAvant = m.prevu;
-  lignes.forEach((l) => { m.saisie[l.travailleur_id] = l.statut_id; });
+  lignes.forEach((l) => { m.saisie[l.travailleur_id] = l.statut_id; if (typeof l.cantine === 'boolean') m.cantine[l.travailleur_id] = l.cantine; else delete m.cantine[l.travailleur_id]; });
   m.prevu = {};
   m.msg = '';
   vueMoniteur();
   const { error } = await sb.from('presences').upsert(lignes, { onConflict: 'travailleur_id,jour' });
   if (error) {
     m.saisie = avant;
+    m.cantine = cantAvant;
     m.prevu = prevuAvant;
-    m.msg = 'Enregistrement impossible : ' + error.message;
+    m.msg = messageBase(error);
     vueMoniteur();
   }
 }
@@ -788,18 +854,23 @@ async function appliquerPrevues() {
   if (m.valide || m.verrou) return;
   const ids = Object.keys(m.prevu);
   if (!ids.length) return;
-  const lignes = ids.map((id) => ({ esat_id: S.profil.esat_id, travailleur_id: id, jour: m.jour, statut_id: m.prevu[id], saisi_par: S.user.id }));
+  const lignes = ids.map((id) => {
+    const cant = cantinePour(id, m.prevu[id]);
+    return { esat_id: S.profil.esat_id, travailleur_id: id, jour: m.jour, statut_id: m.prevu[id], saisi_par: S.user.id, ...(cant !== undefined ? { cantine: cant } : {}) };
+  });
   const avant = { ...m.saisie };
+  const cantAvant = { ...m.cantine };
   const prevuAvant = m.prevu;
-  lignes.forEach((l) => { m.saisie[l.travailleur_id] = l.statut_id; });
+  lignes.forEach((l) => { m.saisie[l.travailleur_id] = l.statut_id; if (typeof l.cantine === 'boolean') m.cantine[l.travailleur_id] = l.cantine; else delete m.cantine[l.travailleur_id]; });
   m.prevu = {};
   m.msg = '';
   vueMoniteur();
   const { error } = await sb.from('presences').upsert(lignes, { onConflict: 'travailleur_id,jour' });
   if (error) {
     m.saisie = avant;
+    m.cantine = cantAvant;
     m.prevu = prevuAvant;
-    m.msg = 'Enregistrement impossible : ' + error.message;
+    m.msg = messageBase(error);
     vueMoniteur();
   }
 }
@@ -834,6 +905,7 @@ function vueMoniteur() {
   const estAujourdhui = m.jour === aujourdhui;
   const minimum = decalerJour(aujourdhui, -JOURS_ARRIERE_MAX);
   const fige = m.valide || m.verrou;
+  const avecCantine = aFonction('cantine');
   const nbPrevu = Object.keys(m.prevu).length;
 
   // Choix du jour : pour corriger une saisie passée
@@ -882,12 +954,12 @@ function vueMoniteur() {
     const identite = [h('td', { class: 'nomcol' }, w.nom), h('td', {}, w.prenom, demi)];
     if (!attendu(w)) {
       return h('tr', { class: 'absent', style: 'opacity:.65' }, identite,
-        h('td', { colspan: '2' }, h('span', { class: 'vide-motif' }, 'Ne travaille pas ce jour (horaires)')));
+        h('td', { colspan: avecCantine ? '3' : '2' }, h('span', { class: 'vide-motif' }, 'Ne travaille pas ce jour (horaires)')));
     }
     if (!sP || !sA) {
       // Sécurité : si les statuts de base manquent, on affiche tous les statuts.
       return h('tr', {}, identite,
-        h('td', { colspan: '2' }, h('div', { class: 'opts', role: 'group', 'aria-label': 'Statut de ' + nomW },
+        h('td', { colspan: avecCantine ? '3' : '2' }, h('div', { class: 'opts', role: 'group', 'aria-label': 'Statut de ' + nomW },
           m.statuts.map((s) => bouton(s, s.nom, () => choisirStatut(w.id, s.id), cur === s)))));
     }
     const present = cur === sP;
@@ -907,12 +979,20 @@ function vueMoniteur() {
       h('td', {}, h('div', { class: 'opts', role: 'group', 'aria-label': 'Présence de ' + nomW },
         bouton(sP, 'Présent', () => choisirStatut(w.id, sP.id), present),
         bouton(sA, 'Absent', () => { if (!absent) choisirStatut(w.id, sA.id); }, absent))),
-      h('td', {}, motif));
+      h('td', {}, motif),
+      avecCantine ? h('td', {}, estPresence(cur)
+        ? h('div', { class: 'opts', role: 'group', 'aria-label': 'Cantine pour ' + nomW },
+            [[true, 'Mange'], [false, 'Ne mange pas']].map(([val, texte]) => h('button', {
+              type: 'button', class: 'st' + (m.cantine[w.id] === val ? ' sel' : ''), style: '--c:#0B3558',
+              'aria-pressed': String(m.cantine[w.id] === val), disabled: fige, onClick: () => choisirCantine(w.id, val)
+            }, h('span', {}, texte))),
+            typeof m.cantine[w.id] === 'boolean' ? null : h('span', { class: 'tag', style: 'align-self:center' }, 'À préciser'))
+        : h('span', { class: 'vide-motif' }, '—')) : null);
   });
 
   const tableau = h('div', { class: 'scroll' }, h('table', { class: 'tbl saisie' },
     h('caption', { class: 'sr' }, 'Présences de l’atelier ' + m.atelier + ', ' + dateLongue(m.jour)),
-    h('thead', {}, h('tr', {}, h('th', {}, 'Nom'), h('th', {}, 'Prénom'), h('th', {}, 'Présence'), h('th', {}, 'Motif de l’absence'))),
+    h('thead', {}, h('tr', {}, h('th', {}, 'Nom'), h('th', {}, 'Prénom'), h('th', {}, 'Présence'), h('th', {}, 'Motif de l’absence'), avecCantine ? h('th', {}, 'Cantine') : null)),
     h('tbody', {}, lignes)));
 
   const recap = h('div', { class: 'card stack' },
@@ -921,7 +1001,13 @@ function vueMoniteur() {
       const n = presentsAttendus.filter((w) => m.saisie[w.id] === s.id).length;
       return h('span', { class: 'chip', style: '--c:' + couleurSure(s.couleur) },
         h('span', { class: 'code' }, s.code), s.nom + ' : ' + n);
-    }))
+    }).concat(avecCantine ? (() => {
+      const pres = presentsAttendus.filter((w) => estPresence(m.statuts.find((x) => x.id === m.saisie[w.id])));
+      const mange = pres.filter((w) => m.cantine[w.id] === true).length;
+      const aPrec = pres.filter((w) => typeof m.cantine[w.id] !== 'boolean').length;
+      return [h('span', { class: 'chip', style: '--c:#0B3558' }, h('span', { class: 'code' }, '🍽'), 'Repas : ' + mange)]
+        .concat(aPrec ? [h('span', { class: 'chip', style: '--c:#B34700' }, h('span', { class: 'code' }, '?'), 'Cantine à préciser : ' + aPrec)] : []);
+    })() : []))
   );
 
   const bas = m.verrou
@@ -967,7 +1053,7 @@ async function chargerAdmin(selectionId) {
   if (S.supEd === undefined) S.supEd = await lireSupport();
   S.msg = { ...(await lireMessages()), brouillon: (S.msg && S.msg.brouillon) || '', duree: S.msg && S.msg.duree, ok: S.msg && S.msg.ok, err: S.msg && S.msg.err };
   const [es, st, pf] = await Promise.all([
-    sb.from('esats').select('id, nom, cree_le').order('cree_le'),
+    sb.from('esats').select('*').order('cree_le'),
     sb.from('statuts').select('*').order('ordre').order('code'),
     sb.from('profils').select('id, email, role, esat_id')
   ]);
@@ -1104,6 +1190,33 @@ function blocStatuts(ctx) {
         edition ? h('button', { type: 'button', class: 'secondary', onClick: annuler }, 'Annuler') : null)));
 }
 
+async function basculerFonction(esat, f, actif) {
+  const a = S.a;
+  a.msgFonc = ''; a.errFonc = '';
+  const { error } = await sb.rpc('maj_fonction', { p_esat: esat.id, p_cle: f.cle, p_actif: actif });
+  if (error) {
+    a.errFonc = /maj_fonction|does not exist|schema cache/i.test(error.message) ? 'Option non activée : exécutez d’abord atelio-v26.sql dans Supabase.' : 'Modification impossible : ' + error.message;
+    return vueAdmin();
+  }
+  esat.fonctions = { ...(esat.fonctions || {}), [f.cle]: actif };
+  a.msgFonc = '« ' + f.nom + ' » ' + (actif ? 'activée' : 'désactivée') + ' pour ' + esat.nom + '.';
+  vueAdmin();
+}
+
+function blocFonctions(esat) {
+  const a = S.a;
+  const etat = (f) => (esat.fonctions && typeof esat.fonctions[f.cle] === 'boolean') ? esat.fonctions[f.cle] : f.defaut;
+  return h('div', { class: 'card stack' },
+    h('h2', {}, 'Fonctions activées pour cet ESAT'),
+    h('p', { class: 'muted' }, 'Décochez une fonction pour la masquer à cet ESAT, ou cochez une nouveauté pour la tester chez lui seul. Le changement est immédiat (l’ESAT le voit après avoir actualisé la page).'),
+    h('ul', { class: 'list', style: 'gap:12px' }, FONCTIONS.map((f) => h('li', {},
+      h('label', { class: 'row', style: 'justify-content:flex-start;gap:12px;align-items:flex-start;cursor:pointer' },
+        h('input', { type: 'checkbox', class: 'coche', checked: etat(f), onChange: (e) => basculerFonction(esat, f, e.target.checked) }),
+        h('span', {}, h('strong', {}, f.nom), h('br'), h('span', { class: 'muted' }, f.desc)))))),
+    a.errFonc ? h('p', { class: 'err', role: 'alert' }, a.errFonc) : null,
+    a.msgFonc ? h('p', { class: 'ok', role: 'status' }, a.msgFonc) : null);
+}
+
 function pastille(s) {
   return h('span', { class: 'chip', style: '--c:' + couleurSure(s.couleur) }, h('span', { class: 'code' }, s.code), s.nom);
 }
@@ -1152,6 +1265,7 @@ function vueAdmin() {
           ? h('p', { class: 'muted' }, 'Aucun compte pour l’instant.')
           : h('ul', { class: 'list', style: 'gap:6px' }, comptes.map((c) => h('li', {}, c.email + ' · ' + ROLES[c.role])))
       ),
+      blocFonctions(esat),
       blocStatuts(CTX_A)
     );
   }
@@ -1227,19 +1341,19 @@ async function chargerAdminEsat(choix) {
     sb.from('mois_clotures').select('mois').eq('mois', debut).maybeSingle(),
     sb.from('jours_fermes').select('jour, motif').gte('jour', debut).lte('jour', fin)
   ]);
-  const pr = await toutLire(() => sb.from('presences').select('id, travailleur_id, jour, statut_id')
+  const pr = await toutLire(() => sb.from('presences').select(colsPresences('id, travailleur_id, jour, statut_id'))
     .gte('jour', debut).lte('jour', fin).order('id'));
   const ko = [e, at, st, tr, va, pr].find((r) => r.error);
   if (ko) return vueMessage('Chargement impossible', ko.error.message);
 
-  const pres = {};
-  pr.data.forEach((r) => { pres[r.travailleur_id + '|' + r.jour] = r.statut_id; });
+  const pres = {}; const cant = {};
+  pr.data.forEach((r) => { pres[r.travailleur_id + '|' + r.jour] = r.statut_id; if (r.cantine === true) cant[r.travailleur_id + '|' + r.jour] = true; });
   const valid = {};
   va.data.forEach((r) => { valid[r.atelier_id + '|' + r.jour] = true; });
 
   S.d = {
     annee, mois, atelierId: ancien.atelierId || 'tous',
-    esat: e.data ? e.data.nom : '', ateliers: at.data, statuts: st.data, travailleurs: tr.data, pres, valid,
+    esat: e.data ? e.data.nom : '', ateliers: at.data, statuts: st.data, travailleurs: tr.data, pres, cant, valid,
     cloture: !!(cl && !cl.error && cl.data),
     fermes: mapFermes(fe && !fe.error ? fe.data : [], [annee])
   };
@@ -1379,7 +1493,12 @@ async function construireClasseur(o) {
   const formuleTot = (i, r, valeur) => {
     const col = o.colsTot[i];
     const plage = L(PREM_JOUR) + r + ':' + L(DERN_JOUR) + r;
-    if (i === 0 || i >= 2) {
+    if (i === 0) {
+      const noms = col.ids.map((id) => parId[id]).filter(Boolean);
+      if (!noms.length) return valeur;
+      return { formula: noms.map((s) => 'COUNTIF(' + plage + ',"' + critere(s.nom) + '")').join('+'), result: valeur };
+    }
+    if (i >= 2) {
       const s = parId[col.ids[0]];
       if (!s) return valeur;
       return { formula: 'COUNTIF(' + plage + ',"' + critere(s.nom) + '")', result: valeur };
@@ -1556,18 +1675,20 @@ function vueAdminEsat() {
     .sort((a, b) => a.nom.localeCompare(b.nom, 'fr') || a.prenom.localeCompare(b.prenom, 'fr'));
   const details = gens.map((w) => {
     const cpt = {};
-    let manque = 0;
+    let manque = 0; let repas = 0;
     const cells = info.map((x) => {
       const sid = d.pres[w.id + '|' + x.iso];
       const s = sid ? parId[sid] : null;
+      if (s && idsP.has(s.id) && d.cant && d.cant[w.id + '|' + x.iso]) repas++;
       const cr = creneau(w, x.iso);
       const off = !s && !x.we && !cr;   // ne travaille pas ce jour-là (horaires)
       if (s) cpt[s.id] = (cpt[s.id] || 0) + 1;
       else if (!x.we && !off && x.j <= jusqua) manque++;
       return { x, s, off, cr };
     });
-    return { w, cells, cpt, manque };
+    return { w, cells, cpt, manque, repas };
   });
+  const avecRepas = aFonction('cantine');
 
   // Colonnes de totaux : Présent, total des absences, puis un motif par colonne.
   // Les motifs sont les statuts de l'ESAT (de base + ceux ajoutés pour lui par l'éditeur).
@@ -1578,7 +1699,7 @@ function vueAdminEsat() {
   const somme = (c, cpt) => c.ids.reduce((tot, id) => tot + (cpt[id] || 0), 0);
   d.calc = { info, details, colsTot, somme };
   const entetesTotaux = colsTot.map((c) => h('th', { class: 'tot' }, c.label))
-    .concat([h('th', { class: 'tot', title: 'Jours du lundi au vendredi sans statut saisi' }, 'Non saisi')]);
+    .concat([h('th', { class: 'tot', title: 'Jours du lundi au vendredi sans statut saisi' }, 'Non saisi'), avecRepas ? h('th', { class: 'tot', title: 'Repas pris à la cantine dans le mois' }, 'Repas') : null]);
   const entetesJours = info.map((x) => h('th', { class: x.we ? 'we' : '', title: x.ferie || null }, h('div', {}, x.lettre), h('div', {}, String(x.j))));
 
   const cellulesJours = (l) => l.cells.map(({ x, s, off, cr }) => s
@@ -1589,7 +1710,8 @@ function vueAdminEsat() {
       : h('td', { class: 'c vide' + (x.we ? ' we' : ''), title: cr === 'M' || cr === 'A' ? LIBELLE_CRENEAU[cr] : null }, x.we ? '' : (cr === 'M' ? 'M' : cr === 'A' ? 'A' : '\u00b7')));
   const totauxLigne = (l) => [
     colsTot.map((c) => h('td', { class: 'tot' }, String(somme(c, l.cpt)))),
-    h('td', { class: 'tot' }, String(l.manque))
+    h('td', { class: 'tot' }, String(l.manque)),
+    avecRepas ? h('td', { class: 'tot' }, String(l.repas || 0)) : null
   ];
   const nomFichier = (suffixe) => 'atelio-presences-' + d.annee + '-' + String(d.mois + 1).padStart(2, '0') + '-' + suffixe + '.xlsx';
 
@@ -1631,12 +1753,12 @@ function vueAdminEsat() {
         return { x, saisis, presents, total: attendus, valide: !!d.valid[a.id + '|' + x.iso] };
       });
       const cpt = {};
-      let manque = 0;
+      let manque = 0; let repas = 0;
       membres.forEach((l) => {
         Object.keys(l.cpt).forEach((k) => { cpt[k] = (cpt[k] || 0) + l.cpt[k]; });
-        manque += l.manque;
+        manque += l.manque; repas += l.repas || 0;
       });
-      return { a, membres, jours, cpt, manque, total: membres.length };
+      return { a, membres, jours, cpt, manque, repas, total: membres.length };
     });
     const totalJours = info.map((x, i) => {
       const saisis = parAtelier.reduce((t, l) => t + l.jours[i].saisis, 0);
@@ -1646,11 +1768,11 @@ function vueAdminEsat() {
       return { x, saisis, presents, total, valide };
     });
     const totalCpt = {};
-    let totalManque = 0;
+    let totalManque = 0; let totalRepas = 0;
     let totalEffectif = 0;
     parAtelier.forEach((l) => {
       Object.keys(l.cpt).forEach((k) => { totalCpt[k] = (totalCpt[k] || 0) + l.cpt[k]; });
-      totalManque += l.manque;
+      totalManque += l.manque; totalRepas += l.repas || 0;
       totalEffectif += l.total;
     });
 
@@ -1687,7 +1809,7 @@ function vueAdminEsat() {
       h('td', { class: 's s2' }, 'Effectif : ' + totalEffectif),
       h('td', { class: 's s3 sl' }, ''),
       totalJours.map(cellule),
-      totauxLigne({ cpt: totalCpt, manque: totalManque })));
+      totauxLigne({ cpt: totalCpt, manque: totalManque, repas: totalRepas })));
 
     tableau = h('div', { class: 'scroll' }, h('table', { class: 'cal' },
       h('caption', { class: 'sr' }, 'Présences de tous les ateliers et de leurs travailleurs, ' + libelleMois(d.annee, d.mois)),
@@ -2481,7 +2603,7 @@ function vueGestion() {
     h('div', { class: 'stack', style: 'gap:6px' }, h('p', { class: 'muted' }, g.esat), h('h1', {}, 'Gérer l’ESAT')),
     g.err ? h('p', { class: 'err', role: 'alert' }, g.err) : null,
     g.msg ? h('p', { class: 'ok', role: 'status' }, g.msg) : null,
-    S.profil.role === 'admin_esat' ? blocMessages(() => chargerGestion(true)) : null,
+    S.profil.role === 'admin_esat' && aFonction('messages') ? blocMessages(() => chargerGestion(true)) : null,
     blocAteliers, blocTravailleurs, blocComptes, blocImport
   ], true));
 }
@@ -2836,12 +2958,13 @@ async function chargerReporting(choix) {
     sb.from('esats').select('nom').eq('id', p.esat_id).maybeSingle(),
     sb.from('ateliers').select('id, nom').eq('esat_id', p.esat_id).order('nom'),
     sb.from('statuts').select('*').order('ordre').order('code'),
-    sb.from('travailleurs').select('id, prenom, nom, atelier_id, actif').order('prenom'),
+    sb.from('travailleurs').select('*').order('prenom'),
     toutLire(() => sb.from('journees_validees').select('atelier_id, jour').gte('jour', debut).lte('jour', fin).order('jour').order('atelier_id')),
     sb.from('mois_clotures').select('mois, cloture_le'),
     sb.from('jours_fermes').select('jour, motif').gte('jour', isoJour(annee, mois, 1)).lte('jour', fin)
   ]);
-  const pr = await toutLire(() => sb.from('presences').select('id, travailleur_id, jour, statut_id').gte('jour', debut).lte('jour', fin).order('id'));
+  const pr = await toutLire(() => sb.from('presences').select(colsPresences('id, travailleur_id, jour, statut_id')).gte('jour', debut).lte('jour', fin).order('id'));
+  const prevision = aFonction('cantine') ? await chargerPrevisionRepas() : null;
   const ko = [e, at, st, tr, va, pr].find((x) => x.error);
   if (ko) return vueMessage('Chargement impossible', ko.error.message);
 
@@ -2849,7 +2972,7 @@ async function chargerReporting(choix) {
   (cl.data || []).forEach((x) => { clotures[String(x.mois).slice(0, 10)] = x.cloture_le || true; });
   S.r = {
     annee, mois, esat: e.data ? e.data.nom : '', ateliers: at.data, statuts: st.data, travailleurs: tr.data,
-    validees: va.data, presences: pr.data, clotures, fermes: mapFermes(fe && !fe.error ? fe.data : [], [annee]), clotureIndispo: !!cl.error,
+    validees: va.data, presences: pr.data, prevision, clotures, fermes: mapFermes(fe && !fe.error ? fe.data : [], [annee]), clotureIndispo: !!cl.error,
     confirmer: null, err: '', msg: ''
   };
   vueReporting();
@@ -2866,7 +2989,7 @@ function calculerReporting(r) {
 
   const mois6 = Array.from({ length: MOIS_COURTS_NB }, (_, i) => {
     const dt = new Date(r.annee, r.mois - (MOIS_COURTS_NB - 1) + i, 1);
-    return { a: dt.getFullYear(), m: dt.getMonth(), cle: cleMois(dt.getFullYear(), dt.getMonth()), saisies: 0, presents: 0, cpt: {}, jours: new Set(), taux: null };
+    return { a: dt.getFullYear(), m: dt.getMonth(), cle: cleMois(dt.getFullYear(), dt.getMonth()), saisies: 0, presents: 0, repas: 0, cpt: {}, jours: new Set(), taux: null };
   });
   const parCle = Object.fromEntries(mois6.map((x) => [x.cle, x]));
   const cible = cleMois(r.annee, r.mois);
@@ -2880,13 +3003,15 @@ function calculerReporting(r) {
     if (!s || !mm) return;
     const estP = idsP.has(p.statut_id);
     mm.saisies++; if (estP) mm.presents++;
+    if (estP && p.cantine === true) mm.repas++;
     mm.cpt[s.id] = (mm.cpt[s.id] || 0) + 1;
     mm.jours.add(p.jour);
     const g = dateDepuisISO(p.jour).getDay();
     semBrut[g].saisies++; if (!estP) semBrut[g].abs++;
     if (k !== cible) return;
-    const j = jours[p.jour] || (jours[p.jour] = { iso: p.jour, saisies: 0, presents: 0 });
+    const j = jours[p.jour] || (jours[p.jour] = { iso: p.jour, saisies: 0, presents: 0, repas: 0 });
     j.saisies++; if (estP) j.presents++;
+    if (estP && p.cantine === true) j.repas++;
     const at = atelierDe[p.travailleur_id];
     const a = ateStat[at] || (ateStat[at] = { saisies: 0, presents: 0, cpt: {} });
     a.saisies++; if (estP) a.presents++; a.cpt[s.id] = (a.cpt[s.id] || 0) + 1;
@@ -2943,10 +3068,146 @@ function calculerReporting(r) {
 
   return {
     ...r, mois6, idxMois, courant, precedent, statutP, statutA, statutsAbs, couleurP: statutP ? statutP.couleur : '#2F7B3A', couleurA: statutA ? statutA.couleur : '#B34700',
-    jours: listeJours, ateliersStats, attendues, nonValidees, semaine, suivi, sansSaisie, termine, premier,
+    prevision: calculerPrevisionRepas(r), jours: listeJours, ateliersStats, attendues, nonValidees, semaine, suivi, sansSaisie, termine, premier,
     cloture: r.clotures[premier] || null,
     nbAbs: courant.saisies - courant.presents, nbAbsPrec: precedent ? precedent.saisies - precedent.presents : null
   };
+}
+
+// ---------------------------------------------------------------------
+// CANTINE : prévision du jour et graphiques de repas
+// ---------------------------------------------------------------------
+async function chargerPrevisionRepas() {
+  try {
+    const auj = aujourdhuiISO();
+    const [hist, ap, fe] = await Promise.all([
+      toutLire(() => sb.from('presences').select('id, travailleur_id, jour, statut_id, cantine').gte('jour', decalerJour(auj, -42)).lte('jour', auj).order('id')),
+      sb.from('absences_prevues').select('travailleur_id, statut_id, debut, fin').gte('fin', auj),
+      sb.from('jours_fermes').select('jour, motif').gte('jour', auj).lte('jour', decalerJour(auj, 21))
+    ]);
+    if (hist.error) return null;
+    return { auj, hist: hist.data || [], prevues: ap.error ? [] : (ap.data || []), fermes: fe.error ? [] : (fe.data || []) };
+  } catch (e) { return null; }
+}
+
+// Estimation des repas du prochain jour ouvré : pour chaque personne attendue (selon ses horaires, hors absences prévues),
+// probabilité d'être présente x probabilité de manger à la cantine, d'après ses 6 dernières semaines, ajustées par sa journée d'hier.
+function calculerPrevisionRepas(r) {
+  const pv = r.prevision;
+  if (!pv) return null;
+  const idsP = idsPresence(r.statuts);
+  const an = +pv.auj.slice(0, 4);
+  const fermes = mapFermes(pv.fermes, [an, an + 1]);
+  const ouvert = (iso) => { const g = dateDepuisISO(iso).getDay(); return g >= 1 && g <= 5 && !fermes[iso]; };
+  let cible = pv.auj; let n = 0;
+  while (!ouvert(cible) && n < 21) { cible = decalerJour(cible, 1); n++; }
+
+  const parJour = {};
+  pv.hist.forEach((q) => { if (q.jour < cible) (parJour[q.jour] = parJour[q.jour] || []).push(q); });
+  const joursAvant = Object.keys(parJour).sort();
+  const hierIso = joursAvant.length ? joursAvant[joursAvant.length - 1] : null;
+  const hier = hierIso ? {
+    iso: hierIso,
+    presents: parJour[hierIso].filter((q) => idsP.has(q.statut_id)).length,
+    repas: parJour[hierIso].filter((q) => idsP.has(q.statut_id) && q.cantine === true).length
+  } : null;
+
+  const parW = {};
+  let cantTotal = 0; let cantVrai = 0;
+  pv.hist.forEach((q) => {
+    if (q.jour >= cible) return;
+    const w = parW[q.travailleur_id] || (parW[q.travailleur_id] = { jours: 0, pres: 0, cs: 0, cv: 0, hierPres: null, hierCant: null });
+    w.jours++;
+    const estP = idsP.has(q.statut_id);
+    if (estP) { w.pres++; if (typeof q.cantine === 'boolean') { w.cs++; cantTotal++; if (q.cantine) { w.cv++; cantVrai++; } } }
+    if (q.jour === hierIso) { w.hierPres = estP ? 1 : 0; w.hierCant = estP && typeof q.cantine === 'boolean' ? (q.cantine ? 1 : 0) : null; }
+  });
+  if (!cantTotal) return { vide: true, cible, auj: pv.auj };
+  const tauxGlobal = cantVrai / cantTotal;
+
+  const absents = new Set(pv.prevues.filter((a) => a.debut <= cible && cible <= a.fin && !idsP.has(a.statut_id)).map((a) => a.travailleur_id));
+  const ateliers = {}; let attendus = 0; let absPrevues = 0;
+  r.travailleurs.filter((w) => w.actif && creneau(w, cible)).forEach((w) => {
+    if (absents.has(w.id)) { absPrevues++; return; }
+    const q = parW[w.id];
+    let pPres = q && q.jours >= 3 ? q.pres / q.jours : 0.9;
+    if (q && q.hierPres !== null) pPres = 0.5 * pPres + 0.5 * q.hierPres;
+    let pCant = q && q.cs >= 3 ? q.cv / q.cs : tauxGlobal;
+    if (q && q.hierCant !== null) pCant = 0.5 * pCant + 0.5 * q.hierCant;
+    const a = ateliers[w.atelier_id] || (ateliers[w.atelier_id] = { attendus: 0, e: 0 });
+    a.attendus++; a.e += pPres * pCant; attendus++;
+  });
+  const liste = r.ateliers.map((a) => ({ id: a.id, nom: a.nom, attendus: (ateliers[a.id] || {}).attendus || 0, repas: Math.round((ateliers[a.id] || { e: 0 }).e) })).filter((a) => a.attendus > 0);
+  return { cible, auj: pv.auj, attendus, absPrevues, hier, ateliers: liste, total: liste.reduce((t, a) => t + a.repas, 0) };
+}
+
+function blocPrevisionRepas(c) {
+  const pv = c.prevision;
+  if (!pv) return h('p', { class: 'muted' }, 'La prévision n’est pas disponible pour le moment.');
+  if (pv.vide) return h('p', { class: 'muted' }, 'Pas encore assez de saisies de cantine pour estimer les repas. Dès que les moniteurs auront précisé la cantine pendant quelques jours, la prévision apparaîtra ici.');
+  const quand = pv.cible === pv.auj ? 'aujourd’hui' : minuscule(dateLongue(pv.cible));
+  const max = Math.max(1, ...pv.ateliers.map((a) => a.repas));
+  const pl = (k, un, plu) => (k > 1 ? plu : un);
+  return h('div', { class: 'stack', style: 'gap:14px' },
+    h('div', { class: 'row', style: 'justify-content:flex-start;align-items:baseline;gap:14px' }, h('span', { class: 'prev-n' }, String(pv.total)), h('span', { style: 'font-size:18px;font-weight:600' }, pl(pv.total, 'repas', 'repas') + ' à prévoir ' + quand)),
+    h('ul', { class: 'list', style: 'gap:6px;font-weight:430' },
+      h('li', {}, '• ' + nf(pv.attendus) + ' ' + pl(pv.attendus, 'personne attendue', 'personnes attendues') + ' selon les horaires' + (pv.absPrevues ? ', hors ' + nf(pv.absPrevues) + ' ' + pl(pv.absPrevues, 'absence prévue', 'absences prévues') : '') + '.'),
+      pv.hier ? h('li', {}, '• Dernière journée saisie (' + dateLongue(pv.hier.iso) + ') : ' + nf(pv.hier.repas) + ' ' + pl(pv.hier.repas, 'repas', 'repas') + ' pour ' + nf(pv.hier.presents) + ' ' + pl(pv.hier.presents, 'présent', 'présents') + '.') : null),
+    h('div', { class: 'stack', style: 'gap:10px' }, pv.ateliers.map((a) => h('div', { class: 'stack', style: 'gap:4px' },
+      h('div', { class: 'row' }, h('span', {}, a.nom), h('strong', {}, String(a.repas))),
+      h('div', { class: 'bar', 'aria-hidden': 'true' }, h('div', { style: 'width:' + Math.round((a.repas / max) * 100) + '%' }))))),
+    h('p', { class: 'muted' }, 'Estimation : pour chaque personne attendue, sa fréquence de présence et de cantine sur les 6 dernières semaines, ajustée selon sa journée précédente, sans les absences prévues.'));
+}
+
+const COULEUR_REPAS = '#0B5CAD';
+// Repas par mois (6 derniers mois)
+function grapheRepasMois(r) {
+  const totaux = r.mois6.map((x) => x.repas);
+  return graphique((w, o) => {
+    const H = 250;
+    const svg = sv('svg', { width: w, height: H, viewBox: `0 0 ${w} ${H}`, class: 'svg' });
+    const y = axeY(svg, w, H, echelle(Math.max(...totaux, 0)));
+    const bande = (w - M.g - M.d) / r.mois6.length;
+    const lc = Math.min(24, bande * 0.5);
+    r.mois6.forEach((x, i) => {
+      const cx = M.g + bande * (i + 0.5);
+      svg.append(sv('text', { x: cx, y: H - 8, 'text-anchor': 'middle', class: 'ax' }, moisCourt(x.a, x.m, x.m === 0 || i === 0)));
+      const hh = Math.max(x.repas > 0 ? 2 : 0, y(0) - y(x.repas));
+      const el = sv('path', { d: rectBout(cx - lc / 2, y(0) - hh, lc, hh, 'haut'), fill: COULEUR_REPAS });
+      sensible(el, (px, py) => o.montrer(px, py, libelleMois(x.a, x.m), [{ couleur: COULEUR_REPAS, valeur: nf(x.repas), libelle: 'repas' }],
+        'En ' + minuscule(libelleMois(x.a, x.m)) + ', ' + nf(x.repas) + ' repas ont été pris à la cantine pour ' + nf(x.presents) + ' journées de présence.'), o);
+      el.setAttribute('aria-label', libelleMois(x.a, x.m) + ' : ' + x.repas + ' repas');
+      svg.append(el);
+      if (x.repas > 0) svg.append(sv('text', { x: cx, y: y(x.repas) - 8, 'text-anchor': 'middle', class: 'val' }, nf(x.repas)));
+    });
+    return svg;
+  }, 'Repas par mois sur six mois : ' + r.mois6.map((x) => libelleMois(x.a, x.m) + ' ' + x.repas).join(', '));
+}
+
+// Repas jour par jour dans le mois
+function grapheRepasJours(r) {
+  const j = r.jours;
+  return graphique((w, o) => {
+    const H = 250;
+    const svg = sv('svg', { width: w, height: H, viewBox: `0 0 ${w} ${H}`, class: 'svg' });
+    const y = axeY(svg, w, H, echelle(Math.max(...j.map((q) => q.repas), 0)));
+    const bande = (w - M.g - M.d) / Math.max(j.length, 1);
+    const lc = Math.max(4, Math.min(24, bande * 0.62));
+    const pasEtiq = bande >= 22 ? 1 : (bande >= 12 ? 2 : 5);
+    j.forEach((q, i) => {
+      const cx = M.g + bande * (i + 0.5);
+      if (i % pasEtiq === 0 || i === j.length - 1) svg.append(sv('text', { x: cx, y: H - 8, 'text-anchor': 'middle', class: 'ax' }, String(+q.iso.slice(8))));
+      const hh = Math.max(q.repas > 0 ? 2 : 0, y(0) - y(q.repas));
+      const el = sv('path', { d: rectBout(cx - lc / 2, y(0) - hh, lc, hh, 'haut'), fill: COULEUR_REPAS });
+      sensible(el, (px, py) => o.montrer(px, py, jourCourt(q.iso), [
+        { couleur: COULEUR_REPAS, valeur: nf(q.repas), libelle: 'repas' },
+        { valeur: nf(q.presents), libelle: 'présents' }],
+        'Le ' + jourCourt(q.iso) + ', ' + nf(q.repas) + ' repas ont été pris à la cantine pour ' + nf(q.presents) + ' ' + (q.presents > 1 ? 'personnes présentes' : 'personne présente') + '.'), o);
+      el.setAttribute('aria-label', jourCourt(q.iso) + ' : ' + q.repas + ' repas');
+      svg.append(el);
+    });
+    return svg;
+  }, 'Repas jour par jour en ' + libelleMois(r.annee, r.mois));
 }
 
 function phrasesCles(c) {
@@ -3086,6 +3347,9 @@ function vueReporting() {
     tuile('Journées d’absence', nf(c.nbAbs),
       c.termine && c.nbAbsPrec != null && c.precedent.saisies ? deltaTexte(c.nbAbs - c.nbAbsPrec, '', false, prevLib, 0) : (c.termine ? null : { sens: 'neutre', texte: 'mois en cours' }),
       miniCourbe(c.mois6.map((x) => (x.saisies ? x.saisies - x.presents : null)), couleurSure(c.couleurA))),
+    aFonction('cantine') ? tuile('Repas servis', nf(mc.repas),
+      c.termine && c.precedent && c.precedent.saisies ? deltaTexte(mc.repas - c.precedent.repas, '', true, prevLib, 0) : (c.termine ? null : { sens: 'neutre', texte: 'mois en cours' }),
+      miniCourbe(c.mois6.map((x) => (x.saisies ? x.repas : null)), COULEUR_REPAS)) : null,
     tuile('Journées validées', c.attendues ? pct((c.attendues - c.nonValidees) / c.attendues, 0) : '—',
       c.attendues ? { sens: c.nonValidees ? 'mauvais' : 'bon', texte: c.nonValidees ? nf(c.nonValidees) + ' à valider' : '✓ tout est validé' } : null, null));
 
@@ -3102,8 +3366,15 @@ function vueReporting() {
   const semaineTable = donnees(['Jour', 'Absences', 'Saisies', 'Taux d’absence'], c.semaine.map((q) => [q.long, nf(q.abs), nf(q.saisies), pct(q.taux, 1)]));
 
   const vide = !mc.saisies;
+  const repasJoursTable = donnees(['Jour', 'Repas', 'Présents'], c.jours.map((j) => [jourCourt(j.iso), nf(j.repas), nf(j.presents)]));
+  const repasMoisTable = donnees(['Mois', 'Repas', 'Journées de présence'], c.mois6.map((x) => [libelleMois(x.a, x.m), nf(x.repas), nf(x.presents)]));
+  const cartesCantine = aFonction('cantine') ? [
+    carte('Repas à prévoir', 'Estimation d’après les présences et les habitudes', blocPrevisionRepas(c), null, 'c4'),
+    carte('Repas servis par jour', lib + ' · jours avec saisie', grapheRepasJours(c), repasJoursTable, 'c8'),
+    carte('Repas servis par mois', '6 derniers mois', grapheRepasMois(c), repasMoisTable, 'c12')] : [];
   const graphes = vide
-    ? h('section', { class: 'card' }, h('p', {}, 'Aucune présence n’a été saisie en ' + minuscule(lib) + '. Les graphiques apparaîtront dès les premières saisies des moniteurs.'))
+    ? h('div', { class: 'stack' }, h('section', { class: 'card' }, h('p', {}, 'Aucune présence n’a été saisie en ' + minuscule(lib) + '. Les graphiques apparaîtront dès les premières saisies des moniteurs.')),
+        aFonction('cantine') ? h('div', { class: 'rgrid' }, carte('Repas à prévoir', 'Estimation d’après les présences et les habitudes', blocPrevisionRepas(c), null, 'c6')) : null)
     : h('div', { class: 'rgrid' },
         carte('Taux de présence par jour', lib + ' · jours avec saisie', grapheJours(c), joursTable, 'c8'),
         carte('Répartition des statuts', 'Tous ateliers · ' + minuscule(lib), h('div', { class: 'stack' },
@@ -3112,7 +3383,8 @@ function vueReporting() {
         carte('Évolution du taux de présence', '6 derniers mois', grapheTendance(c), tendanceTable, 'c6'),
         carte('Absences par motif', 'Jours d’absence, 6 derniers mois', grapheAbsencesMois(c), h('div', { class: 'stack' }, legendeStatuts(c.statutsAbs), absTable), 'c6'),
         carte('Absences selon le jour de la semaine', 'Part des saisies en absence · 6 derniers mois', grapheSemaine(c), semaineTable, 'c6'),
-        carte('Personnes à accompagner', 'Les plus de jours d’absence en ' + minuscule(lib), tableauSuivi(c), null, 'c6'));
+        carte('Personnes à accompagner', 'Les plus de jours d’absence en ' + minuscule(lib), tableauSuivi(c), null, 'c6'),
+        ...cartesCantine);
 
   render(pageAvec([
     h('div', { class: 'noprint' }, navPrincipale('reporting')),
@@ -3240,7 +3512,7 @@ async function chargerMarque() {
   S.marque = null;
   if (!S.profil || !S.profil.esat_id) return;
   try {
-    const { data, error } = await sb.from('esats').select('nom, logo, couleur').eq('id', S.profil.esat_id).maybeSingle();
+    const { data, error } = await sb.from('esats').select('*').eq('id', S.profil.esat_id).maybeSingle();
     if (!error && data) S.marque = data;
   } catch (e) { /* sans logo : l'application fonctionne quand même */ }
 }
